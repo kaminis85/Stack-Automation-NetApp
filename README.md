@@ -1,4 +1,4 @@
-# Stack-Automation-NetApp Test
+# Stack-Automation-NetApp
 
 ```
 blueprints/

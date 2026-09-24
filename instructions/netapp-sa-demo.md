@@ -9,7 +9,7 @@ aggregates you list and verifies each aggregate on its assigned node.
 1. Select an agent that can reach the ONTAP cluster management address over
    HTTPS. The agent needs the `netapp.ontap` and `torque.collections` Ansible
    collections, as listed in
-   `netapp-sa/assets/ansible/netapp-ontap/requirements.yml`.
+   `assets/ansible/netapp-ontap/requirements.yml`.
 2. Enter the cluster management address and ONTAP administrator credentials.
 3. Fill in the aggregates table, one row per aggregate:
 

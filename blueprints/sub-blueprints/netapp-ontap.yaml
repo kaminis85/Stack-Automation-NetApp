@@ -4,7 +4,7 @@ description: Create data aggregates on a NetApp ONTAP cluster.
 instructions:
   source:
     store: Stack-Automation-NetApp
-    path: netapp-sa/instructions/netapp-ontap.md
+    path: instructions/netapp-ontap.md
 
 metadata:
   display-name: ONTAP Create Data Aggregates
@@ -12,7 +12,7 @@ metadata:
     - key: Category
       value: Storage
   icon:
-    path: netapp-sa/graphics/netapp-ontap.svg
+    path: graphics/netapp-ontap.svg
 
 customization:
   grains-map:
@@ -90,7 +90,7 @@ grains:
     spec:
       source:
         store: Stack-Automation-NetApp
-        path: netapp-sa/assets/ansible/netapp-ontap/discover_disk_class.yaml
+        path: assets/ansible/netapp-ontap/discover_disk_class.yaml
       agent:
         name: '{{ .inputs.agent }}'
       inputs:
@@ -106,7 +106,7 @@ grains:
     spec:
       source:
         store: Stack-Automation-NetApp
-        path: netapp-sa/assets/ansible/netapp-ontap/create_data_aggregates.yaml
+        path: assets/ansible/netapp-ontap/create_data_aggregates.yaml
       agent:
         name: '{{ .inputs.agent }}'
       inputs:

@@ -12,7 +12,7 @@ This blueprint runs two ordered automation stages:
    HTTPS.
 2. Ensure the agent has the `netapp.ontap` and `torque.collections` Ansible
    collections installed. The required collections are listed in
-   `netapp-sa/assets/ansible/netapp-ontap/requirements.yml`.
+   `assets/ansible/netapp-ontap/requirements.yml`.
 3. Enter the cluster management address and ONTAP administrator credentials.
 4. Fill in the aggregates table. Each row creates one aggregate:
 

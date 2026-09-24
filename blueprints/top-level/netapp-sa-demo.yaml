@@ -7,7 +7,7 @@ description: >-
 instructions:
   source:
     store: Stack-Automation-NetApp
-    path: netapp-sa/instructions/netapp-sa-demo.md
+    path: instructions/netapp-sa-demo.md
 
 metadata:
   display-name: NetApp SA Demo (Composite)
@@ -16,7 +16,7 @@ metadata:
       value: Storage
     - key: Experimental
   icon:
-    path: netapp-sa/graphics/netapp-sa-demo.svg
+    path: graphics/netapp-sa-demo.svg
 
 customization:
   launch-form:
@@ -76,7 +76,7 @@ grains:
     spec:
       source:
         store: Stack-Automation-NetApp
-        path: netapp-sa/blueprints/sub-blueprints/netapp-ontap.yaml
+        path: blueprints/sub-blueprints/netapp-ontap.yaml
       inputs:
         - agent: '{{ .inputs.agent }}'
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'

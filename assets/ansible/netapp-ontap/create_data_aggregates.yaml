@@ -4,7 +4,7 @@
   connection: local
   gather_facts: false
   vars:
-    aggregate_plan: >-
+    aggregate_rows: >-
       {{
         (aggregates | from_json)
         if aggregates is string
@@ -15,8 +15,22 @@
     - name: Validate that at least one aggregate was requested
       ansible.builtin.assert:
         that:
-          - aggregate_plan | length > 0
+          - aggregate_rows | length > 0
         fail_msg: Provide at least one aggregate row.
+
+    # The launch-form table keys each row by its column header, so rows arrive
+    # as either node_name or "Node Name" depending on how they were entered.
+    - name: Normalize the aggregate rows
+      ansible.builtin.set_fact:
+        aggregate_plan: "{{ aggregate_plan | default([]) + [normalized_row] }}"
+      vars:
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) }}"
+          aggregate_name: "{{ item.aggregate_name | default(item['Aggregate Name'], true) | default('', true) }}"
+          disk_count: "{{ item.disk_count | default(item['Disk Count'], true) | default(0, true) }}"
+      loop: "{{ aggregate_rows }}"
+      loop_control:
+        label: "{{ item.aggregate_name | default(item['Aggregate Name'], true) | default('unnamed row', true) }}"
 
     - name: Validate each requested aggregate
       ansible.builtin.assert:
@@ -26,7 +40,7 @@
           - item.disk_count | default(0) | int > 0
         fail_msg: >-
           Row {{ ansible_loop.index }} is incomplete. Every aggregate needs a
-          node_name, an aggregate_name, and a disk_count above zero.
+          Node Name, an Aggregate Name, and a Disk Count above zero.
       loop: "{{ aggregate_plan }}"
       loop_control:
         extended: true

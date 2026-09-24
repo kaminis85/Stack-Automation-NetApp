@@ -1,0 +1,95 @@
+---
+- name: Create and verify ONTAP data aggregates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    aggregate_plan: >-
+      {{
+        (aggregates | from_json)
+        if aggregates is string
+        else aggregates
+      }}
+
+  tasks:
+    - name: Validate that at least one aggregate was requested
+      ansible.builtin.assert:
+        that:
+          - aggregate_plan | length > 0
+        fail_msg: Provide at least one aggregate row.
+
+    - name: Validate each requested aggregate
+      ansible.builtin.assert:
+        that:
+          - item.node_name | default('') | length > 0
+          - item.aggregate_name | default('') | length > 0
+          - item.disk_count | default(0) | int > 0
+        fail_msg: >-
+          Row {{ ansible_loop.index }} is incomplete. Every aggregate needs a
+          node_name, an aggregate_name, and a disk_count above zero.
+      loop: "{{ aggregate_plan }}"
+      loop_control:
+        extended: true
+        label: "{{ item.aggregate_name | default('row ' ~ ansible_loop.index) }}"
+
+    - name: Validate that aggregate names are unique
+      ansible.builtin.assert:
+        that:
+          - aggregate_plan | map(attribute='aggregate_name') | unique | list | length == aggregate_plan | length
+        fail_msg: >-
+          Aggregate names must be unique. Requested names:
+          {{ aggregate_plan | map(attribute='aggregate_name') | join(', ') }}.
+
+    - name: Create data aggregates
+      netapp.ontap.na_ontap_aggregate:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        name: "{{ item.aggregate_name }}"
+        disk_count: "{{ item.disk_count }}"
+        nodes: "{{ item.node_name }}"
+        disk_class: "{{ disk_class }}"
+        https: true
+        validate_certs: false
+      loop: "{{ aggregate_plan }}"
+      loop_control:
+        label: "{{ item.aggregate_name }} on {{ item.node_name }}"
+
+    - name: Get aggregate information for verification
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        fields:
+          - name
+          - node
+      register: aggregate_info
+      no_log: true
+
+    - name: Verify aggregate existence and node placement
+      ansible.builtin.assert:
+        that:
+          - item.aggregate_name in (aggregate_info.ontap_info.storage_aggregates.records | default([]) | map(attribute='name') | list)
+          - item.node_name in (aggregate_info.ontap_info.storage_aggregates.records | default([]) | selectattr('name', 'equalto', item.aggregate_name) | map(attribute='node.name') | list)
+        fail_msg: >-
+          Aggregate {{ item.aggregate_name }} was not found on node
+          {{ item.node_name }} after creation.
+        success_msg: >-
+          Verified aggregate {{ item.aggregate_name }} on node
+          {{ item.node_name }}.
+      loop: "{{ aggregate_plan }}"
+      loop_control:
+        label: "{{ item.aggregate_name }} on {{ item.node_name }}"
+
+    - name: Export Stack Automation outputs
+      torque.collections.export_torque_outputs:
+        outputs:
+          aggregate_status: >-
+            Created and verified {{ aggregate_plan | length }} data
+            aggregate(s) on {{ ontap_hostname }}.

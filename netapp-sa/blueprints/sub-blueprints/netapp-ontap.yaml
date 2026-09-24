@@ -1,0 +1,119 @@
+spec_version: 2
+description: Create data aggregates on a NetApp ONTAP cluster.
+
+instructions:
+  source:
+    store: Stack-Automation-NetApp
+    path: netapp-sa/instructions/netapp-ontap.md
+
+metadata:
+  display-name: ONTAP Create Data Aggregates
+  blueprint-labels:
+    - key: Category
+      value: Storage
+  icon:
+    path: netapp-sa/graphics/netapp-ontap.svg
+
+customization:
+  grains-map:
+    initial-map-view: custom
+    nodes:
+      discover_disk_class:
+        type: grain
+        position:
+          x: 100
+          y: 150
+        style:
+          hidden: false
+      create_data_aggregates:
+        type: grain
+        position:
+          x: 500
+          y: 150
+        style:
+          hidden: false
+  launch-form:
+    categories:
+      - name: ONTAP Cluster
+        icon: layer
+        sections:
+          - name: CONNECTION
+            icon: list
+            default_open: true
+            inputs:
+              - name: agent
+              - name: ontap_hostname
+              - name: ontap_username
+              - name: ontap_password
+          - name: DATA AGGREGATES
+            icon: tags
+            default_open: true
+            inputs:
+              - name: aggregates
+                type: object
+                header: Node Name,Aggregate Name,Disk Count
+
+inputs:
+  agent:
+    type: agent
+    description: Select an agent that can reach the ONTAP cluster.
+  ontap_hostname:
+    type: string
+    description: ONTAP cluster management IP address or hostname.
+  ontap_username:
+    type: string
+    default: admin
+    description: ONTAP cluster administrator username.
+  ontap_password:
+    type: string
+    sensitive: true
+    description: ONTAP cluster administrator password.
+  aggregates:
+    type: string
+    default: |
+      [
+        {"node_name": "AA02-C800-01", "aggregate_name": "AA02_C800_01_SSD_CAP_1", "disk_count": 15},
+        {"node_name": "AA02-C800-02", "aggregate_name": "AA02_C800_02_SSD_CAP_1", "disk_count": 15}
+      ]
+    description: >-
+      One row per aggregate. Each row names the node the aggregate is created
+      on, the aggregate name, and how many disks it uses. Add a row per node
+      for an HA pair, or keep a single row for a single-node cluster.
+
+outputs:
+  aggregate_status:
+    value: '{{ .grains.create_data_aggregates.outputs.aggregate_status }}'
+
+grains:
+  discover_disk_class:
+    kind: ansible
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: netapp-sa/assets/ansible/netapp-ontap/discover_disk_class.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+      outputs:
+        - disk_class
+
+  create_data_aggregates:
+    kind: ansible
+    depends-on: discover_disk_class
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: netapp-sa/assets/ansible/netapp-ontap/create_data_aggregates.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - aggregates: '{{ .inputs.aggregates }}'
+        - disk_class: '{{ .grains.discover_disk_class.outputs.disk_class }}'
+      outputs:
+        - aggregate_status

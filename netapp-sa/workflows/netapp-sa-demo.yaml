@@ -1,0 +1,9 @@
+spec_version: 1
+description: Placeholder Torque workflow for the netapp-sa-demo environment.
+inputs:
+  environment_name:
+    type: string
+    default: netapp-sa-demo
+steps:
+  - name: placeholder
+    description: Replace with real workflow activities.

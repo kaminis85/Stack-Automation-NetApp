@@ -29,14 +29,14 @@ customization:
             default_open: true
             inputs:
               - name: agent
-              - name: ontap_hostname
-              - name: ontap_username
-              - name: ontap_password
+              - name: ONTAP Cluster Management IP
+              - name: ONTAP Username
+              - name: ONTAP Password
           - name: DATA AGGREGATES
             icon: tags
             default_open: true
             inputs:
-              - name: aggregates
+              - name: Aggregate Inputs
                 type: object
                 header: Node Name,Aggregate Name,Disk Count
 
@@ -44,18 +44,18 @@ inputs:
   agent:
     type: agent
     description: Select an agent that can reach the ONTAP cluster.
-  ontap_hostname:
+  ONTAP Cluster Management IP:
     type: string
     description: ONTAP cluster management IP address or hostname.
-  ontap_username:
+  ONTAP Username:
     type: string
     default: admin
     description: ONTAP cluster administrator username.
-  ontap_password:
+  ONTAP Password:
     type: string
     sensitive: true
     description: ONTAP cluster administrator password.
-  aggregates:
+  Aggregate Inputs:
     type: string
     default: |
       [
@@ -79,9 +79,9 @@ grains:
         path: blueprints/sub-blueprints/netapp-ontap.yaml
       inputs:
         - agent: '{{ .inputs.agent }}'
-        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
-        - ontap_username: '{{ .inputs.ontap_username }}'
-        - ontap_password: '{{ .inputs.ontap_password }}'
-        - aggregates: '{{ .inputs.aggregates }}'
+        - ONTAP Cluster Management IP: '{{ .inputs.ONTAP Cluster Management IP }}'
+        - ONTAP Username: '{{ .inputs.ONTAP Username }}'
+        - ONTAP Password: '{{ .inputs.ONTAP Password }}'
+        - Aggregate Inputs: '{{ .inputs.Aggregate Inputs }}'
       outputs:
         - aggregate_status

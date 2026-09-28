@@ -6,9 +6,9 @@
   vars:
     aggregate_rows: >-
       {{
-        (Aggregate Inputs | from_json)
-        if Aggregate Inputs is string
-        else Aggregate Inputs
+        (vars['Aggregate Inputs'] | from_json)
+        if vars['Aggregate Inputs'] is string
+        else vars['Aggregate Inputs']
       }}
 
   tasks:
@@ -56,9 +56,9 @@
 
     - name: Create data aggregates
       netapp.ontap.na_ontap_aggregate:
-        hostname: "{{ ONTAP Cluster Management IP }}"
-        username: "{{ ONTAP Username }}"
-        password: "{{ ONTAP Password }}"
+        hostname: "{{ vars['ONTAP Cluster Management IP'] }}"
+        username: "{{ vars['ONTAP Username'] }}"
+        password: "{{ vars['ONTAP Password'] }}"
         name: "{{ item.aggregate_name }}"
         disk_count: "{{ item.disk_count }}"
         nodes: "{{ item.node_name }}"
@@ -71,9 +71,9 @@
 
     - name: Get aggregate information for verification
       netapp.ontap.na_ontap_rest_info:
-        hostname: "{{ ONTAP Cluster Management IP }}"
-        username: "{{ ONTAP Username }}"
-        password: "{{ ONTAP Password }}"
+        hostname: "{{ vars['ONTAP Cluster Management IP'] }}"
+        username: "{{ vars['ONTAP Username'] }}"
+        password: "{{ vars['ONTAP Password'] }}"
         https: true
         validate_certs: false
         use_rest: always
@@ -106,4 +106,4 @@
         outputs:
           aggregate_status: >-
             Created and verified {{ aggregate_plan | length }} data
-            aggregate(s) on {{ ONTAP Cluster Management IP }}.
+            aggregate(s) on {{ vars['ONTAP Cluster Management IP'] }}.

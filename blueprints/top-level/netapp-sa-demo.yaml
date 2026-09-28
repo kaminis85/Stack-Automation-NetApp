@@ -79,9 +79,9 @@ grains:
         path: blueprints/sub-blueprints/netapp-ontap.yaml
       inputs:
         - agent: '{{ .inputs.agent }}'
-        - ONTAP Cluster Management IP: '{{ .inputs.ONTAP Cluster Management IP }}'
-        - ONTAP Username: '{{ .inputs.ONTAP Username }}'
-        - ONTAP Password: '{{ .inputs.ONTAP Password }}'
-        - Aggregate Inputs: '{{ .inputs.Aggregate Inputs }}'
+        - ONTAP Cluster Management IP: '{{ .inputs.["ONTAP Cluster Management IP"] }}'
+        - ONTAP Username: '{{ .inputs.["ONTAP Username"] }}'
+        - ONTAP Password: '{{ .inputs.["ONTAP Password"] }}'
+        - Aggregate Inputs: '{{ .inputs.["Aggregate Inputs"] }}'
       outputs:
         - aggregate_status

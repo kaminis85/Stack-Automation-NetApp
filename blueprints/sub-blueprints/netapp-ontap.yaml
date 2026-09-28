@@ -94,9 +94,9 @@ grains:
       agent:
         name: '{{ .inputs.agent }}'
       inputs:
-        - ONTAP Cluster Management IP: '{{ .inputs.ONTAP Cluster Management IP }}'
-        - ONTAP Username: '{{ .inputs.ONTAP Username }}'
-        - ONTAP Password: '{{ .inputs.ONTAP Password }}'
+        - ONTAP Cluster Management IP: '{{ .inputs.["ONTAP Cluster Management IP"] }}'
+        - ONTAP Username: '{{ .inputs.["ONTAP Username"] }}'
+        - ONTAP Password: '{{ .inputs.["ONTAP Password"] }}'
       outputs:
         - disk_class
 
@@ -110,10 +110,10 @@ grains:
       agent:
         name: '{{ .inputs.agent }}'
       inputs:
-        - ONTAP Cluster Management IP: '{{ .inputs.ONTAP Cluster Management IP }}'
-        - ONTAP Username: '{{ .inputs.ONTAP Username }}'
-        - ONTAP Password: '{{ .inputs.ONTAP Password }}'
-        - Aggregate Inputs: '{{ .inputs.Aggregate Inputs }}'
+        - ONTAP Cluster Management IP: '{{ .inputs.["ONTAP Cluster Management IP"] }}'
+        - ONTAP Username: '{{ .inputs.["ONTAP Username"] }}'
+        - ONTAP Password: '{{ .inputs.["ONTAP Password"] }}'
+        - Aggregate Inputs: '{{ .inputs.["Aggregate Inputs"] }}'
         - disk_class: '{{ .grains.discover_disk_class.outputs.disk_class }}'
       outputs:
         - aggregate_status

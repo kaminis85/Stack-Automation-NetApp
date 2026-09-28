@@ -7,9 +7,9 @@
   tasks:
     - name: Get the disk class information
       netapp.ontap.na_ontap_rest_info:
-        hostname: "{{ ontap_hostname }}"
-        username: "{{ ontap_username }}"
-        password: "{{ ontap_password }}"
+        hostname: "{{ vars['ONTAP Cluster Management IP'] }}"
+        username: "{{ vars['ONTAP Username'] }}"
+        password: "{{ vars['ONTAP Password'] }}"
         https: true
         validate_certs: false
         use_rest: always

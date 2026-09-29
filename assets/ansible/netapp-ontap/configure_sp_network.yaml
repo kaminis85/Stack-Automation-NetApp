@@ -1,0 +1,61 @@
+---
+- name: Configure ONTAP service-processor network interfaces
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sp_rows: >-
+      {{
+        (sp_interfaces | from_json)
+        if sp_interfaces is string
+        else sp_interfaces
+      }}
+
+  tasks:
+
+    - name: Normalize service-processor rows
+      ansible.builtin.set_fact:
+        sp_plan: "{{ sp_plan | default([]) + [normalized_row] }}"
+      vars:
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) }}"
+          ip: "{{ item.ip | default(item['SP IP'], true) | default('', true) }}"
+          mask: "{{ item.mask | default(item['Netmask'], true) | default('', true) }}"
+          gateway: "{{ item.gateway | default(item['Gateway'], true) | default('', true) }}"
+      loop: "{{ sp_rows }}"
+      loop_control:
+        label: "{{ item.node_name | default(item['Node Name'], true) | default('unnamed row', true) }}"
+
+    - name: Validate service-processor rows
+      ansible.builtin.assert:
+        that:
+          - sp_plan | length > 0
+          - item.node_name | length > 0
+          - item.ip | length > 0
+          - item.mask | length > 0
+          - item.gateway | length > 0
+        fail_msg: >-
+          Row {{ ansible_loop.index }} needs a node name, SP IP, netmask, and gateway.
+      loop: "{{ sp_plan }}"
+      loop_control:
+        extended: true
+        label: "{{ item.node_name }}"
+
+    - name: Set the service-processor network interface
+      netapp.ontap.na_ontap_service_processor_network:
+        state: present
+        ip_address: "{{ item.ip }}"
+        netmask: "{{ item.mask }}"
+        gateway_ip_address: "{{ item.gateway }}"
+        node: "{{ item.node_name }}"
+        is_enabled: true
+        address_type: ipv4
+        dhcp: none
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      loop: "{{ sp_plan }}"
+      loop_control:
+        label: "{{ item.node_name }}"

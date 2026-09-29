@@ -1,0 +1,21 @@
+---
+- name: Set ONTAP SSL FIPS mode
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Enable or disable FIPS on the ONTAP cluster
+      netapp.ontap.na_ontap_security_config:
+        name: ssl
+        is_fips_enabled: "{{ is_fips_enabled | bool }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+
+    - name: Report FIPS mode
+      ansible.builtin.debug:
+        msg: "Cluster FIPS mode is {{ 'enabled' if (is_fips_enabled | bool) else 'disabled' }}."

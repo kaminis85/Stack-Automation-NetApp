@@ -1,0 +1,46 @@
+---
+- name: Add ONTAP licenses
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Validate legacy license keys
+      ansible.builtin.assert:
+        that:
+          - legacy_license_keys | default('') | length > 0
+        fail_msg: Provide legacy_license_keys as a comma-separated list.
+      when: license_key_format == 'legacy'
+
+    - name: Add licenses using legacy keys
+      netapp.ontap.na_ontap_license:
+        state: present
+        license_codes: "{{ legacy_license_keys.split(',') | map('trim') | reject('equalto', '') | list }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      when: license_key_format == 'legacy'
+      no_log: true
+
+    - name: Validate the NLF license contents
+      ansible.builtin.assert:
+        that:
+          - nlf_license_content | default('') | length > 0
+        fail_msg: Paste the NetApp license file contents into nlf_license_content.
+      when: license_key_format == 'NLF'
+
+    - name: Add licenses using a NetApp license file
+      netapp.ontap.na_ontap_license:
+        state: present
+        license_codes:
+          - "{{ nlf_license_content }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      when: license_key_format == 'NLF'
+      no_log: true

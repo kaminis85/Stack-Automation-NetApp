@@ -1,0 +1,26 @@
+---
+- name: Set the ONTAP cluster timezone
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Validate timezone inputs
+      ansible.builtin.assert:
+        that:
+          - cluster_name | default('') | length > 0
+          - time_zone | default('') | length > 0
+        fail_msg: Timezone configuration needs cluster_name and time_zone.
+
+    - name: Set the cluster timezone
+      netapp.ontap.na_ontap_cluster:
+        state: present
+        cluster_name: "{{ cluster_name }}"
+        timezone:
+          name: "{{ time_zone }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

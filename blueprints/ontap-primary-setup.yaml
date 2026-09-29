@@ -1,0 +1,671 @@
+spec_version: 2
+description: >-
+  ONTAP primary setup from the FlexPod Base IMM role ontap_primary_setup.
+  Grains run in role order. Fibre Channel adapter tasks are not included.
+
+instructions:
+  source:
+    store: Stack-Automation-NetApp
+    path: instructions/ontap-primary-setup.md
+
+metadata:
+  display-name: ONTAP Primary Setup
+  blueprint-labels:
+    - key: Category
+      value: Storage
+  icon:
+    path: graphics/netapp-ontap.svg
+
+customization:
+  grains-map:
+    initial-map-view: custom
+    nodes:
+      update_cluster_location:
+        type: grain
+        position: {x: 80, y: 80}
+      configure_cluster_mgmt:
+        type: grain
+        position: {x: 360, y: 80}
+      delete_broadcast_domains:
+        type: grain
+        position: {x: 640, y: 80}
+      configure_sp_network:
+        type: grain
+        position: {x: 920, y: 80}
+      discover_disk_class:
+        type: grain
+        position: {x: 1200, y: 80}
+      create_data_aggregates:
+        type: grain
+        position: {x: 80, y: 320}
+      zero_spare_disks:
+        type: grain
+        position: {x: 360, y: 320}
+      ensure_cluster_ha:
+        type: grain
+        position: {x: 640, y: 320}
+      disable_flow_control:
+        type: grain
+        position: {x: 920, y: 320}
+      enable_cdp:
+        type: grain
+        position: {x: 1200, y: 320}
+      enable_lldp:
+        type: grain
+        position: {x: 80, y: 560}
+      configure_dns:
+        type: grain
+        position: {x: 360, y: 560}
+      configure_ntp:
+        type: grain
+        position: {x: 640, y: 560}
+      enable_storage_failover:
+        type: grain
+        position: {x: 920, y: 560}
+      set_timezone:
+        type: grain
+        position: {x: 1200, y: 560}
+      configure_autosupport:
+        type: grain
+        position: {x: 360, y: 800}
+      add_licenses:
+        type: grain
+        position: {x: 640, y: 800}
+      configure_fips:
+        type: grain
+        position: {x: 920, y: 800}
+      configure_snmp:
+        type: grain
+        position: {x: 1200, y: 800}
+      create_login_banner:
+        type: grain
+        position: {x: 80, y: 1040}
+  launch-form:
+    categories:
+      - name: Connection
+        icon: layer
+        sections:
+          - name: CLUSTER
+            icon: list
+            default_open: true
+            inputs:
+              - name: agent
+              - name: ontap_hostname
+              - name: ontap_username
+              - name: ontap_password
+      - name: Cluster identity
+        icon: list
+        sections:
+          - name: LOCATION
+            default_open: true
+            inputs:
+              - name: cluster_name
+              - name: cluster_location
+          - name: TIMEZONE AND BANNER
+            inputs:
+              - name: time_zone
+              - name: cluster_login_banner
+      - name: High availability
+        icon: layer
+        sections:
+          - name: MANAGEMENT AND FAILOVER
+            inputs:
+              - name: cluster_mgmt_interface
+              - name: cluster_mgmt_auto_revert
+              - name: ha_pair_count
+              - name: node_names
+      - name: Ports
+        icon: tags
+        sections:
+          - name: BROADCAST DOMAINS AND SERVICE PROCESSOR
+            inputs:
+              - name: node_port_counts
+              - name: sp_interfaces
+                type: object
+                header: Node Name,SP IP,Netmask,Gateway
+          - name: DATA PORTS
+            inputs:
+              - name: data_ports
+                type: object
+                header: Node Name,Data Ports
+      - name: Data aggregates
+        icon: tags
+        sections:
+          - name: AGGREGATES
+            default_open: true
+            inputs:
+              - name: aggregates
+                type: object
+                header: Node Name,Aggregate Name,Disk Count
+      - name: Name services
+        icon: list
+        sections:
+          - name: DNS AND NTP
+            inputs:
+              - name: dns_domain_name
+              - name: dns_servers
+              - name: ntp_servers
+      - name: Support and licenses
+        icon: email
+        sections:
+          - name: AUTOSUPPORT
+            inputs:
+              - name: autosupport_mail_hosts
+              - name: autosupport_from_address
+              - name: autosupport_to_addresses
+              - name: autosupport_proxy_url
+          - name: LICENSES
+            inputs:
+              - name: license_key_format
+              - name: legacy_license_keys
+              - name: nlf_license_content
+      - name: Security
+        icon: list
+        sections:
+          - name: FIPS AND SNMP
+            inputs:
+              - name: is_fips_enabled
+              - name: enable_snmp
+              - name: snmp_contact
+              - name: snmp_location
+              - name: traphost_ip
+              - name: snmp_community
+              - name: snmp_v3_user
+              - name: snmp_auth_protocol
+              - name: snmp_auth_password
+              - name: snmp_priv_protocol
+              - name: snmp_priv_password
+
+inputs:
+  agent:
+    type: agent
+    description: Select an agent that can reach the ONTAP cluster.
+  ontap_hostname:
+    type: string
+    description: ONTAP cluster management IP address or hostname.
+  ontap_username:
+    type: string
+    default: admin
+    description: ONTAP cluster administrator username.
+  ontap_password:
+    type: string
+    sensitive: true
+    description: ONTAP cluster administrator password.
+  cluster_name:
+    type: string
+    default: ""
+    description: ONTAP cluster name. Used by location and timezone.
+  cluster_location:
+    type: string
+    default: ""
+    description: Location string stored on the cluster.
+  cluster_mgmt_interface:
+    type: string
+    default: cluster_mgmt
+    description: Cluster management interface name.
+  cluster_mgmt_auto_revert:
+    type: boolean
+    default: true
+    description: Enable auto-revert on the cluster management interface.
+  node_port_counts:
+    type: string
+    default: ""
+    description: >-
+      Comma-separated data-port count per node, for example 2,2. The role
+      deletes (sum of these counts) times 2 default broadcast domains.
+  sp_interfaces:
+    type: string
+    default: "[]"
+    description: One row per node with the service-processor IP, netmask, and gateway.
+  aggregates:
+    type: string
+    default: |
+      [
+        {"node_name": "AA02-C800-01", "aggregate_name": "AA02_C800_01_SSD_CAP_1", "disk_count": 15},
+        {"node_name": "AA02-C800-02", "aggregate_name": "AA02_C800_02_SSD_CAP_1", "disk_count": 15}
+      ]
+    description: >-
+      One row per aggregate. Each row names the node, the aggregate, and how
+      many disks it uses.
+  ha_pair_count:
+    type: string
+    default: "2"
+    description: Number of HA pairs. Cluster HA is changed only when this is 1.
+  data_ports:
+    type: string
+    default: "[]"
+    description: >-
+      One row per node. Data Ports is a comma-separated port list, for example
+      e0e,e0f.
+  dns_domain_name:
+    type: string
+    default: ""
+    description: DNS domain name.
+  dns_servers:
+    type: string
+    default: ""
+    description: Comma-separated DNS server IP addresses.
+  ntp_servers:
+    type: string
+    default: ""
+    description: Comma-separated NTP server IP addresses.
+  node_names:
+    type: string
+    default: ""
+    description: >-
+      Comma-separated ONTAP node names. Used by storage failover and AutoSupport.
+  time_zone:
+    type: string
+    default: ""
+    description: ONTAP timezone name, for example America/Los_Angeles.
+  autosupport_mail_hosts:
+    type: string
+    default: ""
+    description: Comma-separated AutoSupport mail hosts.
+  autosupport_from_address:
+    type: string
+    default: ""
+    description: AutoSupport From address.
+  autosupport_to_addresses:
+    type: string
+    default: ""
+    description: Comma-separated AutoSupport recipient addresses.
+  autosupport_proxy_url:
+    type: string
+    default: ""
+    description: Optional AutoSupport proxy URL. Leave empty to omit it.
+  license_key_format:
+    type: string
+    default: legacy
+    allowed-values: ["legacy", "NLF"]
+    description: legacy uses license keys. NLF uses pasted license-file contents.
+  legacy_license_keys:
+    type: string
+    sensitive: true
+    default: ""
+    description: Comma-separated legacy license keys.
+  nlf_license_content:
+    type: string
+    sensitive: true
+    default: ""
+    description: Full contents of the NetApp license file.
+  is_fips_enabled:
+    type: boolean
+    default: false
+    description: SSL FIPS mode applied on the cluster. When true, SNMP community and traphost are not configured.
+  enable_snmp:
+    type: boolean
+    default: false
+    description: >-
+      Same switch as the role. SNMP tasks run only when this is true.
+  snmp_contact:
+    type: string
+    default: ""
+    description: SNMP contact string.
+  snmp_location:
+    type: string
+    default: ""
+    description: SNMP location string.
+  traphost_ip:
+    type: string
+    default: ""
+    description: SNMP trap host. Applied only when FIPS is disabled.
+  snmp_community:
+    type: string
+    sensitive: true
+    default: ""
+    description: SNMPv1/v2c community. Applied only when FIPS is disabled.
+  snmp_v3_user:
+    type: string
+    default: ""
+    description: SNMPv3 user name.
+  snmp_auth_protocol:
+    type: string
+    default: sha
+    description: SNMPv3 authentication protocol.
+  snmp_auth_password:
+    type: string
+    sensitive: true
+    default: ""
+    description: SNMPv3 authentication password.
+  snmp_priv_protocol:
+    type: string
+    default: aes128
+    description: SNMPv3 privacy protocol.
+  snmp_priv_password:
+    type: string
+    sensitive: true
+    default: ""
+    description: SNMPv3 privacy password.
+  cluster_login_banner:
+    type: string
+    default: ""
+    description: Login banner text.
+
+outputs:
+  disk_class:
+    value: '{{ .grains.discover_disk_class.outputs.disk_class }}'
+  aggregate_status:
+    value: '{{ .grains.create_data_aggregates.outputs.aggregate_status }}'
+
+grains:
+  update_cluster_location:
+    kind: ansible
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/update_cluster_location.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - cluster_name: '{{ .inputs.cluster_name }}'
+        - cluster_location: '{{ .inputs.cluster_location }}'
+
+  configure_cluster_mgmt:
+    kind: ansible
+    depends-on: update_cluster_location
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_cluster_mgmt.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - cluster_mgmt_interface: '{{ .inputs.cluster_mgmt_interface }}'
+        - cluster_mgmt_auto_revert: '{{ .inputs.cluster_mgmt_auto_revert }}'
+
+  delete_broadcast_domains:
+    kind: ansible
+    depends-on: configure_cluster_mgmt
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/delete_broadcast_domains.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - node_port_counts: '{{ .inputs.node_port_counts }}'
+
+  configure_sp_network:
+    kind: ansible
+    depends-on: delete_broadcast_domains
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_sp_network.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - sp_interfaces: '{{ .inputs.sp_interfaces }}'
+
+  discover_disk_class:
+    kind: ansible
+    depends-on: configure_sp_network
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/discover_disk_class.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+      outputs:
+        - disk_class
+
+  create_data_aggregates:
+    kind: ansible
+    depends-on: discover_disk_class
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/create_data_aggregates.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - aggregates: '{{ .inputs.aggregates }}'
+        - disk_class: '{{ .grains.discover_disk_class.outputs.disk_class }}'
+      outputs:
+        - aggregate_status
+
+  zero_spare_disks:
+    kind: ansible
+    depends-on: create_data_aggregates
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/zero_spare_disks.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+
+  ensure_cluster_ha:
+    kind: ansible
+    depends-on: zero_spare_disks
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/ensure_cluster_ha.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - ha_pair_count: '{{ .inputs.ha_pair_count }}'
+
+  disable_flow_control:
+    kind: ansible
+    depends-on: ensure_cluster_ha
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/disable_flow_control.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - data_ports: '{{ .inputs.data_ports }}'
+
+  enable_cdp:
+    kind: ansible
+    depends-on: disable_flow_control
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/enable_cdp.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+
+  enable_lldp:
+    kind: ansible
+    depends-on: enable_cdp
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/enable_lldp.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+
+  configure_dns:
+    kind: ansible
+    depends-on: enable_lldp
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_dns.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - dns_servers: '{{ .inputs.dns_servers }}'
+        - dns_domain_name: '{{ .inputs.dns_domain_name }}'
+
+  configure_ntp:
+    kind: ansible
+    depends-on: configure_dns
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_ntp.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - ntp_servers: '{{ .inputs.ntp_servers }}'
+
+  enable_storage_failover:
+    kind: ansible
+    depends-on: configure_ntp
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/enable_storage_failover.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - node_names: '{{ .inputs.node_names }}'
+
+  set_timezone:
+    kind: ansible
+    depends-on: enable_storage_failover
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/set_timezone.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - cluster_name: '{{ .inputs.cluster_name }}'
+        - time_zone: '{{ .inputs.time_zone }}'
+
+
+  configure_autosupport:
+    kind: ansible
+    depends-on: set_timezone
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_autosupport.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - node_names: '{{ .inputs.node_names }}'
+        - autosupport_mail_hosts: '{{ .inputs.autosupport_mail_hosts }}'
+        - autosupport_from_address: '{{ .inputs.autosupport_from_address }}'
+        - autosupport_to_addresses: '{{ .inputs.autosupport_to_addresses }}'
+        - autosupport_proxy_url: '{{ .inputs.autosupport_proxy_url }}'
+
+  add_licenses:
+    kind: ansible
+    depends-on: configure_autosupport
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/add_licenses.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - license_key_format: '{{ .inputs.license_key_format }}'
+        - legacy_license_keys: '{{ .inputs.legacy_license_keys }}'
+        - nlf_license_content: '{{ .inputs.nlf_license_content }}'
+
+  configure_fips:
+    kind: ansible
+    depends-on: add_licenses
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_fips.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
+
+  configure_snmp:
+    kind: ansible
+    depends-on: configure_fips
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/configure_snmp.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - enable_snmp: '{{ .inputs.enable_snmp }}'
+        - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
+        - snmp_contact: '{{ .inputs.snmp_contact }}'
+        - snmp_location: '{{ .inputs.snmp_location }}'
+        - traphost_ip: '{{ .inputs.traphost_ip }}'
+        - snmp_community: '{{ .inputs.snmp_community }}'
+        - snmp_v3_user: '{{ .inputs.snmp_v3_user }}'
+        - snmp_auth_protocol: '{{ .inputs.snmp_auth_protocol }}'
+        - snmp_auth_password: '{{ .inputs.snmp_auth_password }}'
+        - snmp_priv_protocol: '{{ .inputs.snmp_priv_protocol }}'
+        - snmp_priv_password: '{{ .inputs.snmp_priv_password }}'
+
+  create_login_banner:
+    kind: ansible
+    depends-on: configure_snmp
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/create_login_banner.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - cluster_login_banner: '{{ .inputs.cluster_login_banner }}'

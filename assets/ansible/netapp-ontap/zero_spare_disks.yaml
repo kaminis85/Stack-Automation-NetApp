@@ -1,0 +1,17 @@
+---
+- name: Zero all spare ONTAP disks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Zero all spare disks
+      netapp.ontap.na_ontap_rest_cli:
+        command: storage/disk/zerospares
+        verb: POST
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

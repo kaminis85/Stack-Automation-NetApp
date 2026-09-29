@@ -1,0 +1,27 @@
+---
+- name: Ensure ONTAP cluster HA for a two-node cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Skip cluster HA when this is not a single HA pair
+      ansible.builtin.debug:
+        msg: >-
+          Cluster HA is only changed for a two-node cluster (one HA pair).
+          ha_pair_count is {{ ha_pair_count }}, so this step made no change.
+      when: ha_pair_count | int != 1
+
+    - name: Stop after the two-node check
+      ansible.builtin.meta: end_play
+      when: ha_pair_count | int != 1
+
+    - name: Ensure cluster HA status
+      netapp.ontap.na_ontap_cluster_ha:
+        state: present
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

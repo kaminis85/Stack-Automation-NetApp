@@ -1,0 +1,41 @@
+---
+- name: Configure ONTAP AutoSupport
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Build AutoSupport lists
+      ansible.builtin.set_fact:
+        node_list: "{{ node_names.split(',') | map('trim') | reject('equalto', '') | list }}"
+        mail_host_list: "{{ autosupport_mail_hosts.split(',') | map('trim') | reject('equalto', '') | list }}"
+        to_address_list: "{{ autosupport_to_addresses.split(',') | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Validate AutoSupport inputs
+      ansible.builtin.assert:
+        that:
+          - node_list | length > 0
+          - mail_host_list | length > 0
+          - to_address_list | length > 0
+          - autosupport_from_address | default('') | length > 0
+        fail_msg: >-
+          AutoSupport needs node_names, mail hosts, a from address, and at
+          least one to address.
+
+    - name: Configure AutoSupport
+      netapp.ontap.na_ontap_autosupport:
+        mail_hosts: "{{ mail_host_list }}"
+        node_name: "{{ item }}"
+        to_addresses: "{{ to_address_list }}"
+        from_address: "{{ autosupport_from_address }}"
+        proxy_url: "{{ autosupport_proxy_url if autosupport_proxy_url | default('') | length > 0 else omit }}"
+        transport: https
+        support: true
+        state: present
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      loop: "{{ node_list }}"

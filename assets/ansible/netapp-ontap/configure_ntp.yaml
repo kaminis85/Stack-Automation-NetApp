@@ -1,0 +1,28 @@
+---
+- name: Configure ONTAP NTP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Build the NTP server list
+      ansible.builtin.set_fact:
+        ntp_server_list: "{{ ntp_servers.split(',') | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Validate NTP servers
+      ansible.builtin.assert:
+        that:
+          - ntp_server_list | length > 0
+        fail_msg: Provide ntp_servers as a comma-separated list of IP addresses.
+
+    - name: Configure NTP
+      netapp.ontap.na_ontap_ntp:
+        state: present
+        server_name: "{{ item }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      loop: "{{ ntp_server_list }}"

@@ -1,0 +1,29 @@
+---
+- name: Configure ONTAP DNS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Build the DNS server list
+      ansible.builtin.set_fact:
+        dns_server_list: "{{ dns_servers.split(',') | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Validate DNS inputs
+      ansible.builtin.assert:
+        that:
+          - dns_server_list | length > 0
+          - dns_domain_name | default('') | length > 0
+        fail_msg: Provide dns_domain_name and a comma-separated dns_servers list.
+
+    - name: Configure DNS
+      netapp.ontap.na_ontap_dns:
+        state: present
+        nameservers: "{{ dns_server_list }}"
+        domains: "{{ dns_domain_name }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

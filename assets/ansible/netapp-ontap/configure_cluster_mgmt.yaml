@@ -1,0 +1,23 @@
+---
+- name: Ensure auto-revert on the cluster management interface
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Validate the cluster management interface name
+      ansible.builtin.assert:
+        that:
+          - cluster_mgmt_interface | default('') | length > 0
+        fail_msg: Provide cluster_mgmt_interface, for example cluster_mgmt.
+
+    - name: Ensure auto-revert is set for the cluster management interface
+      netapp.ontap.na_ontap_interface:
+        is_auto_revert: "{{ cluster_mgmt_auto_revert | bool }}"
+        interface_name: "{{ cluster_mgmt_interface }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

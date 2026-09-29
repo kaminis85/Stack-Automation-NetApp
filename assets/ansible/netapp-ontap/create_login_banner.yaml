@@ -1,0 +1,22 @@
+---
+- name: Create the ONTAP cluster login banner
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Validate the login banner
+      ansible.builtin.assert:
+        that:
+          - cluster_login_banner | default('') | length > 0
+        fail_msg: Provide cluster_login_banner.
+
+    - name: Create the login banner for the ONTAP cluster
+      netapp.ontap.na_ontap_login_messages:
+        banner: "{{ cluster_login_banner }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

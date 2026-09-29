@@ -1,0 +1,21 @@
+---
+- name: Enable LLDP on the ONTAP nodes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Enable LLDP on the storage controller nodes
+      netapp.ontap.na_ontap_rest_cli:
+        command: options
+        verb: PATCH
+        params:
+          option_name: lldp.enable
+        body:
+          option_value: "on"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false

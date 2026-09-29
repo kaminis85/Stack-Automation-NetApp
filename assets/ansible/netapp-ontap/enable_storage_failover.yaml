@@ -1,0 +1,30 @@
+---
+- name: Enable ONTAP storage-failover takeover
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+
+    - name: Build the node list
+      ansible.builtin.set_fact:
+        node_list: "{{ node_names.split(',') | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Validate node names
+      ansible.builtin.assert:
+        that:
+          - node_list | length > 0
+        fail_msg: Provide node_names as a comma-separated list of ONTAP node names.
+
+    - name: Enable takeover for storage failover
+      netapp.ontap.na_ontap_rest_cli:
+        command: "storage/failover/objects/{{ item }}"
+        verb: PATCH
+        body:
+          enabled: "true"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      loop: "{{ node_list }}"

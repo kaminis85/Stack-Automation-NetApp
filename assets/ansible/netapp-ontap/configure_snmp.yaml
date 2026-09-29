@@ -1,0 +1,118 @@
+---
+- name: Configure ONTAP SNMP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Skip SNMP when it is disabled
+      ansible.builtin.meta: end_play
+      when: not (enable_snmp | bool)
+
+    - name: Validate SNMP inputs
+      ansible.builtin.assert:
+        that:
+          - snmp_contact | default('') | length > 0
+          - snmp_location | default('') | length > 0
+          - snmp_v3_user | default('') | length > 0
+          - snmp_auth_password | default('') | length > 0
+          - snmp_priv_password | default('') | length > 0
+        fail_msg: >-
+          SNMP needs a contact, location, SNMPv3 user, and both SNMPv3 passwords.
+          Community and traphost are required only when FIPS is disabled.
+
+    - name: Validate SNMP community and traphost when FIPS is disabled
+      ansible.builtin.assert:
+        that:
+          - snmp_community | default('') | length > 0
+          - traphost_ip | default('') | length > 0
+        fail_msg: When FIPS is disabled, provide snmp_community and traphost_ip.
+      when: not (is_fips_enabled | bool)
+
+    - name: Configure SNMP contact
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/contact
+        verb: PATCH
+        body:
+          contact: "{{ snmp_contact }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+
+    - name: Configure SNMP location
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/location
+        verb: PATCH
+        body:
+          location: "{{ snmp_location }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+
+    - name: Configure SNMP init value
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/init
+        verb: PATCH
+        body:
+          init: "1"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+
+    - name: Enable SNMP
+      netapp.ontap.na_ontap_snmp_config:
+        state: present
+        enabled: true
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+
+    - name: Create SNMP traphost
+      netapp.ontap.na_ontap_snmp_traphosts:
+        state: present
+        host: "{{ traphost_ip }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      when: not (is_fips_enabled | bool)
+
+    - name: Configure SNMP community
+      netapp.ontap.na_ontap_snmp:
+        state: present
+        snmp_username: "{{ snmp_community }}"
+        use_rest: always
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      when: not (is_fips_enabled | bool)
+      no_log: true
+
+    - name: Configure SNMPv3 access
+      netapp.ontap.na_ontap_snmp:
+        state: present
+        snmp_username: "{{ snmp_v3_user }}"
+        use_rest: always
+        authentication_method: usm
+        snmpv3:
+          authentication_protocol: "{{ snmp_auth_protocol }}"
+          authentication_password: "{{ snmp_auth_password }}"
+          privacy_protocol: "{{ snmp_priv_protocol }}"
+          privacy_password: "{{ snmp_priv_password }}"
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      no_log: true

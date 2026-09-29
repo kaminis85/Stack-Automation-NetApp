@@ -1,0 +1,63 @@
+---
+- name: Disable flow control on ONTAP data ports
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    port_rows: >-
+      {{
+        (data_ports | from_json)
+        if data_ports is string
+        else data_ports
+      }}
+
+  tasks:
+
+    - name: Normalize data-port rows
+      ansible.builtin.set_fact:
+        port_plan: "{{ port_plan | default([]) + [normalized_row] }}"
+      vars:
+        ports_raw: "{{ item.ports | default(item['Data Ports'], true) | default('', true) }}"
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) }}"
+          ports: >-
+            {{
+              ports_raw
+              if ports_raw is not string
+              else ports_raw.split(',') | map('trim') | reject('equalto', '') | list
+            }}
+      loop: "{{ port_rows }}"
+
+    - name: Validate data-port rows
+      ansible.builtin.assert:
+        that:
+          - port_plan | length > 0
+          - item.node_name | length > 0
+          - item.ports | length > 0
+        fail_msg: >-
+          Row {{ ansible_loop.index }} needs a node name and at least one data port.
+      loop: "{{ port_plan }}"
+      loop_control:
+        extended: true
+        label: "{{ item.node_name | default('row ' ~ ansible_loop.index) }}"
+
+    - name: Disable flow control on data ports
+      netapp.ontap.na_ontap_rest_cli:
+        command: "network/port/objects/{{ item.0.node_name }}/{{ item.1 }}"
+        verb: PATCH
+        body:
+          flowcontrol-admin: none
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      loop: "{{ port_plan | subelements('ports') }}"
+      loop_control:
+        label: "{{ item.0.node_name }}/{{ item.1 }}"
+
+    - name: Note ports that this step does not change
+      ansible.builtin.debug:
+        msg: >-
+          Flow control was changed only on the data ports listed in the launch
+          form. Other ports are left as they are.

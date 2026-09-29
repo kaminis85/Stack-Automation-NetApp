@@ -204,8 +204,9 @@ inputs:
     default: cluster_mgmt
     description: Cluster management interface name.
   cluster_mgmt_auto_revert:
-    type: boolean
-    default: true
+    type: string
+    default: "true"
+    allowed-values: ["true", "false"]
     description: Enable auto-revert on the cluster management interface.
   node_port_counts:
     type: string
@@ -290,12 +291,14 @@ inputs:
     default: ""
     description: Full contents of the NetApp license file.
   is_fips_enabled:
-    type: boolean
-    default: false
+    type: string
+    default: "false"
+    allowed-values: ["true", "false"]
     description: SSL FIPS mode applied on the cluster. When true, SNMP community and traphost are not configured.
   enable_snmp:
-    type: boolean
-    default: false
+    type: string
+    default: "false"
+    allowed-values: ["true", "false"]
     description: >-
       Same switch as the role. SNMP tasks run only when this is true.
   snmp_contact:

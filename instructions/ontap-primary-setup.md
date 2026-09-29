@@ -1,20 +1,27 @@
 # ONTAP Primary Setup
 
-This blueprint runs the non-Fibre-Channel tasks from the FlexPod `ontap_primary_setup` role, in the same order. Each task runs. There is no per-task enable switch.
+This is one blueprint. Each task has its own `run` or `skip` choice, and every choice defaults to `skip`.
 
-Fill every field the way the role's variable files are filled before `Setup_ONTAP.yml`. The only conditions copied from the role are:
+The cluster management address, username, and password are required. Select an agent as well, because that is where the tasks run. Leave every action on `skip` to move through Next and Finish without configuring anything else.
 
-- Cluster HA is changed only when `ha_pair_count` is 1.
-- Licenses use legacy keys or NLF contents, based on `license_key_format`.
-- FIPS mode is set from `is_fips_enabled`. Community and traphost SNMP are skipped when FIPS is enabled.
-- The other SNMP tasks run only when `enable_snmp` is true.
+Set an action to `run` to show and apply that task. For DNS and NTP only, set `dns_action` and `ntp_action` to `run`, fill those fields, and leave the other actions on `skip`.
 
-## Before launch
-
-1. Select an agent that can reach the ONTAP cluster management address over HTTPS.
-2. The agent needs the `netapp.ontap` and `torque.collections` collections listed in `assets/ansible/netapp-ontap/requirements.yml`.
-3. Enter the cluster address, credentials, and the values for each task.
-
-## Result
-
-`disk_class` is the class read from cluster disks. `aggregate_status` reports how many aggregates were created and verified.
+| Action | Task |
+| --- | --- |
+| `cluster_location_action` | Cluster name and location |
+| `cluster_mgmt_action` | Cluster management interface |
+| `broadcast_domains_action` | Delete default broadcast domains |
+| `sp_network_action` | Service-processor addresses |
+| `aggregates_action` | Disk class discovery and aggregate creation |
+| `zero_spares` | Zero spare disks |
+| `cluster_ha_action` | Cluster HA when `ha_pair_count` is 1 |
+| `flow_control_action` | Disable flow control on listed data ports |
+| `cdp` / `lldp` | Enable CDP or LLDP |
+| `dns_action` / `ntp_action` | DNS or NTP |
+| `storage_failover` | Enable takeover |
+| `timezone_action` | Cluster timezone |
+| `autosupport_action` | AutoSupport |
+| `license_key_format` | `skip`, `legacy`, or `NLF` |
+| `is_fips_enabled` | `skip`, `true`, or `false` |
+| `snmp_action` | SNMP |
+| `login_banner_action` | Login banner |

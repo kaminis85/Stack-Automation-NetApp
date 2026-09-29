@@ -1,7 +1,8 @@
 spec_version: 2
 description: >-
   ONTAP primary setup from the FlexPod Base IMM role ontap_primary_setup.
-  Grains run in role order. Fibre Channel adapter tasks are not included.
+  One blueprint. Each task has a run/skip choice and defaults to skip.
+  Fibre Channel is not included.
 
 instructions:
   source:
@@ -99,82 +100,128 @@ customization:
           - name: LOCATION
             default_open: true
             inputs:
+              - name: cluster_location_action
               - name: cluster_name
+                visible: '{% if inputs.cluster_location_action == "run" %}true{% else %}false{% endif %}'
               - name: cluster_location
+                visible: '{% if inputs.cluster_location_action == "run" %}true{% else %}false{% endif %}'
           - name: TIMEZONE AND BANNER
             inputs:
+              - name: timezone_action
               - name: time_zone
+                visible: '{% if inputs.timezone_action == "run" %}true{% else %}false{% endif %}'
+              - name: login_banner_action
               - name: cluster_login_banner
+                visible: '{% if inputs.login_banner_action == "run" %}true{% else %}false{% endif %}'
       - name: High availability
         icon: layer
         sections:
           - name: MANAGEMENT AND FAILOVER
             inputs:
+              - name: cluster_mgmt_action
               - name: cluster_mgmt_interface
+                visible: '{% if inputs.cluster_mgmt_action == "run" %}true{% else %}false{% endif %}'
               - name: cluster_mgmt_auto_revert
+                visible: '{% if inputs.cluster_mgmt_action == "run" %}true{% else %}false{% endif %}'
+              - name: cluster_ha_action
               - name: ha_pair_count
+                visible: '{% if inputs.cluster_ha_action == "run" %}true{% else %}false{% endif %}'
+              - name: storage_failover
               - name: node_names
+                visible: '{% if inputs.storage_failover == "run" or inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
       - name: Ports
         icon: tags
         sections:
           - name: BROADCAST DOMAINS AND SERVICE PROCESSOR
             inputs:
+              - name: broadcast_domains_action
               - name: node_port_counts
+                visible: '{% if inputs.broadcast_domains_action == "run" %}true{% else %}false{% endif %}'
+              - name: sp_network_action
               - name: sp_interfaces
                 type: object
                 header: Node Name,SP IP,Netmask,Gateway
+                visible: '{% if inputs.sp_network_action == "run" %}true{% else %}false{% endif %}'
           - name: DATA PORTS
             inputs:
+              - name: flow_control_action
               - name: data_ports
                 type: object
                 header: Node Name,Data Ports
+                visible: '{% if inputs.flow_control_action == "run" %}true{% else %}false{% endif %}'
+              - name: cdp
+              - name: lldp
       - name: Data aggregates
         icon: tags
         sections:
           - name: AGGREGATES
             default_open: true
             inputs:
+              - name: aggregates_action
               - name: aggregates
                 type: object
                 header: Node Name,Aggregate Name,Disk Count
+                visible: '{% if inputs.aggregates_action == "run" %}true{% else %}false{% endif %}'
+              - name: zero_spares
       - name: Name services
         icon: list
         sections:
           - name: DNS AND NTP
             inputs:
+              - name: dns_action
               - name: dns_domain_name
+                visible: '{% if inputs.dns_action == "run" %}true{% else %}false{% endif %}'
               - name: dns_servers
+                visible: '{% if inputs.dns_action == "run" %}true{% else %}false{% endif %}'
+              - name: ntp_action
               - name: ntp_servers
+                visible: '{% if inputs.ntp_action == "run" %}true{% else %}false{% endif %}'
       - name: Support and licenses
         icon: email
         sections:
           - name: AUTOSUPPORT
             inputs:
+              - name: autosupport_action
               - name: autosupport_mail_hosts
+                visible: '{% if inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
               - name: autosupport_from_address
+                visible: '{% if inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
               - name: autosupport_to_addresses
+                visible: '{% if inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
               - name: autosupport_proxy_url
+                visible: '{% if inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
           - name: LICENSES
             inputs:
               - name: license_key_format
               - name: legacy_license_keys
+                visible: '{% if inputs.license_key_format == "legacy" %}true{% else %}false{% endif %}'
               - name: nlf_license_content
+                visible: '{% if inputs.license_key_format == "NLF" %}true{% else %}false{% endif %}'
       - name: Security
         icon: list
         sections:
           - name: FIPS AND SNMP
             inputs:
               - name: is_fips_enabled
-              - name: enable_snmp
+              - name: snmp_action
               - name: snmp_contact
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_location
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: traphost_ip
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_community
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_v3_user
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_auth_protocol
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_auth_password
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_priv_protocol
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
               - name: snmp_priv_password
+                visible: '{% if inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
 
 inputs:
   agent:
@@ -185,12 +232,76 @@ inputs:
     description: ONTAP cluster management IP address or hostname.
   ontap_username:
     type: string
-    default: admin
     description: ONTAP cluster administrator username.
   ontap_password:
     type: string
     sensitive: true
     description: ONTAP cluster administrator password.
+  cluster_location_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Set the cluster name and location only when this is run.
+  cluster_mgmt_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure the cluster management interface only when this is run.
+  broadcast_domains_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Delete default broadcast domains only when this is run.
+  sp_network_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure service-processor addresses only when this is run.
+  aggregates_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Discover the disk class and create aggregates only when this is run.
+  cluster_ha_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Enable cluster HA only when this is run. ha_pair_count must be 1.
+  flow_control_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Disable flow control on the listed data ports only when this is run.
+  dns_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure DNS only when this is run.
+  ntp_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure NTP only when this is run.
+  timezone_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Set the cluster timezone only when this is run.
+  autosupport_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure AutoSupport only when this is run.
+  snmp_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Configure SNMP only when this is run.
+  login_banner_action:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Set the login banner only when this is run.
   cluster_name:
     type: string
     default: ""
@@ -201,8 +312,8 @@ inputs:
     description: Location string stored on the cluster.
   cluster_mgmt_interface:
     type: string
-    default: cluster_mgmt
-    description: Cluster management interface name.
+    default: ""
+    description: Cluster management interface name. Leave empty to skip this task.
   cluster_mgmt_auto_revert:
     type: string
     default: "true"
@@ -220,24 +331,35 @@ inputs:
     description: One row per node with the service-processor IP, netmask, and gateway.
   aggregates:
     type: string
-    default: |
-      [
-        {"node_name": "AA02-C800-01", "aggregate_name": "AA02_C800_01_SSD_CAP_1", "disk_count": 15},
-        {"node_name": "AA02-C800-02", "aggregate_name": "AA02_C800_02_SSD_CAP_1", "disk_count": 15}
-      ]
+    default: "[]"
     description: >-
-      One row per aggregate. Each row names the node, the aggregate, and how
-      many disks it uses.
+      Leave empty to skip aggregate creation. Otherwise one row per aggregate,
+      naming the node, the aggregate, and how many disks it uses.
+  zero_spares:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Zero spare disks only when this is run.
   ha_pair_count:
     type: string
-    default: "2"
-    description: Number of HA pairs. Cluster HA is changed only when this is 1.
+    default: ""
+    description: Set to 1 to enable cluster HA on a two-node cluster. Leave empty to skip.
   data_ports:
     type: string
     default: "[]"
     description: >-
       One row per node. Data Ports is a comma-separated port list, for example
-      e0e,e0f.
+      e0e,e0f. Leave empty to skip flow-control changes.
+  cdp:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Enable CDP only when this is run.
+  lldp:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Enable LLDP only when this is run.
   dns_domain_name:
     type: string
     default: ""
@@ -250,6 +372,11 @@ inputs:
     type: string
     default: ""
     description: Comma-separated NTP server IP addresses.
+  storage_failover:
+    type: string
+    default: skip
+    allowed-values: ["skip", "run"]
+    description: Enable storage-failover takeover only when this is run.
   node_names:
     type: string
     default: ""
@@ -277,9 +404,9 @@ inputs:
     description: Optional AutoSupport proxy URL. Leave empty to omit it.
   license_key_format:
     type: string
-    default: legacy
-    allowed-values: ["legacy", "NLF"]
-    description: legacy uses license keys. NLF uses pasted license-file contents.
+    default: skip
+    allowed-values: ["skip", "legacy", "NLF"]
+    description: skip leaves licenses unchanged. legacy uses keys. NLF uses pasted license-file contents.
   legacy_license_keys:
     type: string
     sensitive: true
@@ -292,15 +419,9 @@ inputs:
     description: Full contents of the NetApp license file.
   is_fips_enabled:
     type: string
-    default: "false"
-    allowed-values: ["true", "false"]
-    description: SSL FIPS mode applied on the cluster. When true, SNMP community and traphost are not configured.
-  enable_snmp:
-    type: string
-    default: "false"
-    allowed-values: ["true", "false"]
-    description: >-
-      Same switch as the role. SNMP tasks run only when this is true.
+    default: skip
+    allowed-values: ["skip", "true", "false"]
+    description: skip leaves FIPS unchanged. true or false sets SSL FIPS mode. When true, SNMP community and traphost are not configured.
   snmp_contact:
     type: string
     default: ""
@@ -345,15 +466,10 @@ inputs:
     default: ""
     description: Login banner text.
 
-outputs:
-  disk_class:
-    value: '{{ .grains.discover_disk_class.outputs.disk_class }}'
-  aggregate_status:
-    value: '{{ .grains.create_data_aggregates.outputs.aggregate_status }}'
-
 grains:
   update_cluster_location:
     kind: ansible
+    when: '{% if .inputs.cluster_location_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -369,7 +485,7 @@ grains:
 
   configure_cluster_mgmt:
     kind: ansible
-    depends-on: update_cluster_location
+    when: '{% if .inputs.cluster_mgmt_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -385,7 +501,7 @@ grains:
 
   delete_broadcast_domains:
     kind: ansible
-    depends-on: configure_cluster_mgmt
+    when: '{% if .inputs.broadcast_domains_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -400,7 +516,7 @@ grains:
 
   configure_sp_network:
     kind: ansible
-    depends-on: delete_broadcast_domains
+    when: '{% if .inputs.sp_network_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -415,7 +531,7 @@ grains:
 
   discover_disk_class:
     kind: ansible
-    depends-on: configure_sp_network
+    when: '{% if .inputs.aggregates_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -431,6 +547,7 @@ grains:
 
   create_data_aggregates:
     kind: ansible
+    when: '{% if .inputs.aggregates_action == "run" %}true{% else %}false{% endif %}'
     depends-on: discover_disk_class
     spec:
       source:
@@ -449,7 +566,7 @@ grains:
 
   zero_spare_disks:
     kind: ansible
-    depends-on: create_data_aggregates
+    when: '{% if .inputs.zero_spares == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -460,10 +577,11 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
+        - zero_spares: '{{ .inputs.zero_spares }}'
 
   ensure_cluster_ha:
     kind: ansible
-    depends-on: zero_spare_disks
+    when: '{% if .inputs.cluster_ha_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -478,7 +596,7 @@ grains:
 
   disable_flow_control:
     kind: ansible
-    depends-on: ensure_cluster_ha
+    when: '{% if .inputs.flow_control_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -493,7 +611,7 @@ grains:
 
   enable_cdp:
     kind: ansible
-    depends-on: disable_flow_control
+    when: '{% if .inputs.cdp == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -504,10 +622,11 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
+        - cdp: '{{ .inputs.cdp }}'
 
   enable_lldp:
     kind: ansible
-    depends-on: enable_cdp
+    when: '{% if .inputs.lldp == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -518,10 +637,11 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
+        - lldp: '{{ .inputs.lldp }}'
 
   configure_dns:
     kind: ansible
-    depends-on: enable_lldp
+    when: '{% if .inputs.dns_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -537,7 +657,7 @@ grains:
 
   configure_ntp:
     kind: ansible
-    depends-on: configure_dns
+    when: '{% if .inputs.ntp_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -552,7 +672,7 @@ grains:
 
   enable_storage_failover:
     kind: ansible
-    depends-on: configure_ntp
+    when: '{% if .inputs.storage_failover == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -563,11 +683,12 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
+        - storage_failover: '{{ .inputs.storage_failover }}'
         - node_names: '{{ .inputs.node_names }}'
 
   set_timezone:
     kind: ansible
-    depends-on: enable_storage_failover
+    when: '{% if .inputs.timezone_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -584,7 +705,7 @@ grains:
 
   configure_autosupport:
     kind: ansible
-    depends-on: set_timezone
+    when: '{% if .inputs.autosupport_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -603,7 +724,7 @@ grains:
 
   add_licenses:
     kind: ansible
-    depends-on: configure_autosupport
+    when: '{% if .inputs.license_key_format != "skip" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -620,7 +741,7 @@ grains:
 
   configure_fips:
     kind: ansible
-    depends-on: add_licenses
+    when: '{% if .inputs.is_fips_enabled != "skip" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -635,7 +756,7 @@ grains:
 
   configure_snmp:
     kind: ansible
-    depends-on: configure_fips
+    when: '{% if .inputs.snmp_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -646,7 +767,7 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        - enable_snmp: '{{ .inputs.enable_snmp }}'
+        - enable_snmp: "true"
         - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
         - snmp_contact: '{{ .inputs.snmp_contact }}'
         - snmp_location: '{{ .inputs.snmp_location }}'
@@ -660,7 +781,7 @@ grains:
 
   create_login_banner:
     kind: ansible
-    depends-on: configure_snmp
+    when: '{% if .inputs.login_banner_action == "run" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp

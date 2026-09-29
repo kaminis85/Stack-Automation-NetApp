@@ -5,7 +5,7 @@ ONTAP primary setup packaged for Stack Automation from the FlexPod Base IMM role
 ```
 assets/ansible/netapp-ontap/   one playbook per task group
 blueprints/ontap-primary-setup.yaml
-graphics/netapp-ontap.svg
+graphics/netapp.svg
 instructions/ontap-primary-setup.md
 ```
 

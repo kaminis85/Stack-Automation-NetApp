@@ -14,7 +14,7 @@ metadata:
     - key: Category
       value: Storage
   icon:
-    path: graphics/netapp-ontap.svg
+    path: graphics/netapp.svg
 
 customization:
   grains-map:

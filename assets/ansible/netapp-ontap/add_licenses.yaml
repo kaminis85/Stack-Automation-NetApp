@@ -5,6 +5,9 @@
   gather_facts: false
 
   tasks:
+    - name: Choose the license format from the values that were entered
+      ansible.builtin.set_fact:
+        license_key_format: "{{ 'legacy' if (legacy_license_keys | default('') | length > 0) else 'NLF' }}"
 
     - name: Validate legacy license keys
       ansible.builtin.assert:

@@ -5,10 +5,6 @@
   gather_facts: false
 
   tasks:
-    - name: Skip SNMP when it is disabled
-      ansible.builtin.meta: end_play
-      when: not (enable_snmp | bool)
-
     - name: Validate SNMP inputs
       ansible.builtin.assert:
         that:

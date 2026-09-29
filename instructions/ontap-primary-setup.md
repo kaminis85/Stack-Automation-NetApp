@@ -1,27 +1,26 @@
 # ONTAP Primary Setup
 
-This is one blueprint. Each task has its own `run` or `skip` choice, and every choice defaults to `skip`.
+The launch form does not show run or skip switches. Leave a section blank and that task stays skipped. Enter values and that task runs.
 
-The cluster management address, username, and password are required. Select an agent as well, because that is where the tasks run. Leave every action on `skip` to move through Next and Finish without configuring anything else.
+Required fields are the agent, cluster management address, username, and password. You can click Next and Finish with only those filled in.
 
-Set an action to `run` to show and apply that task. For DNS and NTP only, set `dns_action` and `ntp_action` to `run`, fill those fields, and leave the other actions on `skip`.
-
-| Action | Task |
+| Filled in | Task that runs |
 | --- | --- |
-| `cluster_location_action` | Cluster name and location |
-| `cluster_mgmt_action` | Cluster management interface |
-| `broadcast_domains_action` | Delete default broadcast domains |
-| `sp_network_action` | Service-processor addresses |
-| `aggregates_action` | Disk class discovery and aggregate creation |
-| `zero_spares` | Zero spare disks |
-| `cluster_ha_action` | Cluster HA when `ha_pair_count` is 1 |
-| `flow_control_action` | Disable flow control on listed data ports |
-| `cdp` / `lldp` | Enable CDP or LLDP |
-| `dns_action` / `ntp_action` | DNS or NTP |
-| `storage_failover` | Enable takeover |
-| `timezone_action` | Cluster timezone |
-| `autosupport_action` | AutoSupport |
-| `license_key_format` | `skip`, `legacy`, or `NLF` |
-| `is_fips_enabled` | `skip`, `true`, or `false` |
-| `snmp_action` | SNMP |
-| `login_banner_action` | Login banner |
+| Cluster name and location | Update cluster location |
+| Cluster management interface | Set auto-revert on that interface |
+| Node port counts | Delete default broadcast domains |
+| Service-processor rows | Configure the service processor |
+| Aggregate rows | Discover the disk class and create aggregates |
+| `ha_pair_count` set to 1 | Enable cluster HA |
+| Data-port rows | Disable flow control |
+| DNS domain and DNS servers | Configure DNS |
+| NTP servers | Configure NTP |
+| Node names | Enable storage failover |
+| Cluster name and timezone | Set the timezone |
+| Node names plus AutoSupport mail settings | Configure AutoSupport |
+| Legacy license keys or NLF contents | Add licenses |
+| `true` or `false` in FIPS | Set SSL FIPS mode |
+| Any SNMP contact, location, user, community, or traphost | Configure SNMP |
+| Login banner text | Set the login banner |
+
+CDP, LLDP, and spare-disk zeroing have no values to enter, so those grains stay skipped.

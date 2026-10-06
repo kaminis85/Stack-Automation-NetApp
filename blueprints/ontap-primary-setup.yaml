@@ -81,7 +81,7 @@ customization:
         position: {x: 1200, y: 800}
       create_login_banner:
         type: grain
-        position: {x: 80, y: 1040}
+        position: {x: 80, y: 800}
   launch-form:
     categories:
       - name: ONTAP Configuration Parameters

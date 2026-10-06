@@ -4,6 +4,8 @@ The launch form does not show run or skip switches. Leave a section blank and th
 
 Required fields are the agent, cluster management address, username, and password. You can click Next and Finish with only those filled in.
 
+Service-processor, aggregate, and data-port values are plain text. Leave them blank. A table widget inserts an empty row, and that empty row keeps Finish disabled.
+
 | Filled in | Task that runs |
 | --- | --- |
 | Cluster name and location | Update cluster location |

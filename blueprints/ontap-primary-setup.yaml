@@ -84,86 +84,50 @@ customization:
         position: {x: 80, y: 1040}
   launch-form:
     categories:
-      - name: Connection
+      - name: ONTAP Configuration Parameters
         icon: layer
         sections:
-          - name: CLUSTER
+          - name: Infrastructure
             icon: list
-            default_open: true
             inputs:
               - name: agent
+          - name: Cluster Details
+            inputs:
               - name: ontap_hostname
               - name: ontap_username
               - name: ontap_password
-      - name: Cluster identity
-        icon: list
-        sections:
-          - name: LOCATION
-            default_open: true
-            inputs:
               - name: cluster_name
               - name: cluster_location
-          - name: TIMEZONE AND BANNER
-            inputs:
               - name: time_zone
               - name: cluster_login_banner
-      - name: High availability
-        icon: layer
-        sections:
-          - name: MANAGEMENT AND FAILOVER
-            inputs:
               - name: cluster_mgmt_interface
               - name: cluster_mgmt_auto_revert
               - name: ha_pair_count
               - name: node_names
-      - name: Ports
-        icon: tags
-        sections:
-          - name: BROADCAST DOMAINS AND SERVICE PROCESSOR
+          - name: Cluster Port Parameters
             inputs:
               - name: node_port_counts
               - name: sp_interfaces
-                type: object
-                header: Node Name,SP IP,Netmask,Gateway
-          - name: DATA PORTS
-            inputs:
               - name: data_ports
-                type: object
-                header: Node Name,Data Ports
-      - name: Data aggregates
-        icon: tags
-        sections:
-          - name: AGGREGATES
-            default_open: true
+          - name: Data aggregates
             inputs:
               - name: aggregates
-                type: object
-                header: Node Name,Aggregate Name,Disk Count
-      - name: Name services
-        icon: list
-        sections:
-          - name: DNS AND NTP
+          - name: DNS and NTP
             inputs:
               - name: dns_domain_name
               - name: dns_servers
               - name: ntp_servers
-      - name: Support and licenses
-        icon: email
-        sections:
-          - name: AUTOSUPPORT
+          - name: AutoSupport Parameters
             inputs:
               - name: autosupport_mail_hosts
               - name: autosupport_from_address
               - name: autosupport_to_addresses
               - name: autosupport_proxy_url
-          - name: LICENSES
+          - name: ONTAP Licenses
             inputs:
               - name: legacy_license_keys
               - name: nlf_license_content
-      - name: Security
-        icon: list
-        sections:
-          - name: FIPS AND SNMP
+          - name: FIPS and SNMP Configuration Parameters
             inputs:
               - name: is_fips_enabled
               - name: snmp_contact
@@ -215,24 +179,26 @@ inputs:
       deletes (sum of these counts) times 2 default broadcast domains.
   sp_interfaces:
     type: string
-    default: "[]"
-    description: One row per node with the service-processor IP, netmask, and gateway.
+    default: ""
+    description: >-
+      Leave blank to skip. Otherwise a JSON list, one object per node, for
+      example [{"Node Name":"node-01","SP IP":"10.1.1.11","Netmask":"255.255.255.0","Gateway":"10.1.1.1"}].
   aggregates:
     type: string
-    default: "[]"
+    default: ""
     description: >-
-      Leave empty to skip aggregate creation. Otherwise one row per aggregate,
-      naming the node, the aggregate, and how       many disks it uses.
+      Leave blank to skip aggregate creation. Otherwise a JSON list, for
+      example [{"Node Name":"node-01","Aggregate Name":"aggr1","Disk Count":"23"}].
   ha_pair_count:
     type: string
     default: ""
     description: Set to 1 to enable cluster HA on a two-node cluster. Leave empty to skip.
   data_ports:
     type: string
-    default: "[]"
+    default: ""
     description: >-
-      One row per node. Data Ports is a comma-separated port list, for example
-      e0e,e0f. Leave empty to skip flow-control changes.
+      Leave blank to skip flow-control changes. Otherwise a JSON list, for
+      example [{"Node Name":"node-01","Data Ports":"e0e,e0f"}].
   dns_domain_name:
     type: string
     default: ""

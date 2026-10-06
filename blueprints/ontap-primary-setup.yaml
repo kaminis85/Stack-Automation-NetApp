@@ -188,7 +188,7 @@ inputs:
     type: string
     default: "[]"
     description: >-
-      One row per node with Node Name, SP IP, Netmask, and Gateway.
+      One row per node with Node Name, service-processor IP, Netmask, and Gateway.
       Leave the table empty to skip.
   aggregates:
     type: string

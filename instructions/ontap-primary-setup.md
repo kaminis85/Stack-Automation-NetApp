@@ -2,9 +2,9 @@
 
 The launch form does not show run or skip switches. Leave a section blank and that task stays skipped. Enter values and that task runs.
 
-Required fields are the agent, cluster management address, username, and password. You can click Next and Finish with only those filled in.
+Required fields are the agent, cluster management address, and password. The username defaults to admin. You can click Next and Finish with only those filled in.
 
-Service-processor, aggregate, and data-port values are plain text. Leave them blank. A table widget inserts an empty row, and that empty row keeps Finish disabled.
+Service-processor, aggregate, and data-port values are tables. Leave a table empty to skip that task. Delete a blank row before Finish if the button stays disabled.
 
 | Filled in | Task that runs |
 | --- | --- |

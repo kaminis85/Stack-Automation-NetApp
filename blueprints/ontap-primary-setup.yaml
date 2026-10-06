@@ -98,20 +98,26 @@ customization:
               - name: ontap_password
               - name: cluster_name
               - name: cluster_location
-              - name: time_zone
-              - name: cluster_login_banner
               - name: cluster_mgmt_interface
               - name: cluster_mgmt_auto_revert
               - name: ha_pair_count
               - name: node_names
-          - name: Cluster Port Parameters
+              - name: time_zone
+              - name: cluster_login_banner
+          - name: Cluster Port parameters
             inputs:
               - name: node_port_counts
               - name: sp_interfaces
+                type: object
+                header: Node Name,SP IP,Netmask,Gateway
               - name: data_ports
+                type: object
+                header: Node Name,Data Ports
           - name: Data aggregates
             inputs:
               - name: aggregates
+                type: object
+                header: Node Name,Aggregate Name,Disk Count
           - name: DNS and NTP
             inputs:
               - name: dns_domain_name
@@ -149,6 +155,7 @@ inputs:
     description: ONTAP cluster management IP address or hostname.
   ontap_username:
     type: string
+    default: admin
     description: ONTAP cluster administrator username.
   ontap_password:
     type: string
@@ -179,26 +186,26 @@ inputs:
       deletes (sum of these counts) times 2 default broadcast domains.
   sp_interfaces:
     type: string
-    default: ""
+    default: "[]"
     description: >-
-      Leave blank to skip. Otherwise a JSON list, one object per node, for
-      example [{"Node Name":"node-01","SP IP":"10.1.1.11","Netmask":"255.255.255.0","Gateway":"10.1.1.1"}].
+      One row per node with Node Name, SP IP, Netmask, and Gateway.
+      Leave the table empty to skip.
   aggregates:
     type: string
-    default: ""
+    default: "[]"
     description: >-
-      Leave blank to skip aggregate creation. Otherwise a JSON list, for
-      example [{"Node Name":"node-01","Aggregate Name":"aggr1","Disk Count":"23"}].
+      One row per aggregate with Node Name, Aggregate Name, and Disk Count.
+      Leave the table empty to skip.
   ha_pair_count:
     type: string
     default: ""
     description: Set to 1 to enable cluster HA on a two-node cluster. Leave empty to skip.
   data_ports:
     type: string
-    default: ""
+    default: "[]"
     description: >-
-      Leave blank to skip flow-control changes. Otherwise a JSON list, for
-      example [{"Node Name":"node-01","Data Ports":"e0e,e0f"}].
+      One row per node. Data Ports is a comma-separated list, for example
+      e0e,e0f. Leave the table empty to skip.
   dns_domain_name:
     type: string
     default: ""

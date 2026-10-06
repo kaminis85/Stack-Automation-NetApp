@@ -6,15 +6,37 @@
 
   tasks:
 
+    - name: Discover ONTAP cluster nodes
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+        use_python_keys: true
+        gather_subset:
+          - cluster/nodes
+        fields:
+          - name
+      register: node_info
+      no_log: true
+
     - name: Build the node list
       ansible.builtin.set_fact:
-        node_list: "{{ node_names.split(',') | map('trim') | reject('equalto', '') | list }}"
+        node_list: >-
+          {{
+            node_info.ontap_info.cluster_nodes.records
+            | default([])
+            | map(attribute='name')
+            | list
+          }}
 
-    - name: Validate node names
+    - name: Validate discovered nodes
       ansible.builtin.assert:
         that:
           - node_list | length > 0
-        fail_msg: Provide node_names as a comma-separated list of ONTAP node names.
+        fail_msg: The cluster did not return any node names.
 
     - name: Enable takeover for storage failover
       netapp.ontap.na_ontap_rest_cli:

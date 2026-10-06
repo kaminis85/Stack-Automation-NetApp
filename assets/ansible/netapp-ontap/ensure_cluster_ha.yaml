@@ -6,16 +6,41 @@
 
   tasks:
 
-    - name: Skip cluster HA when this is not a single HA pair
+    - name: Discover ONTAP cluster nodes
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+        use_python_keys: true
+        gather_subset:
+          - cluster/nodes
+        fields:
+          - name
+      register: node_info
+      no_log: true
+
+    - name: Count the cluster nodes
+      ansible.builtin.set_fact:
+        node_count: >-
+          {{
+            node_info.ontap_info.cluster_nodes.records
+            | default([])
+            | length
+          }}
+
+    - name: Skip cluster HA unless this is a two-node cluster
       ansible.builtin.debug:
         msg: >-
-          Cluster HA is only changed for a two-node cluster (one HA pair).
-          ha_pair_count is {{ ha_pair_count }}, so this step made no change.
-      when: ha_pair_count | int != 1
+          Cluster HA is only set on a two-node cluster.
+          This cluster has {{ node_count }} nodes, so this step made no change.
+      when: node_count | int != 2
 
     - name: Stop after the two-node check
       ansible.builtin.meta: end_play
-      when: ha_pair_count | int != 1
+      when: node_count | int != 2
 
     - name: Ensure cluster HA status
       netapp.ontap.na_ontap_cluster_ha:

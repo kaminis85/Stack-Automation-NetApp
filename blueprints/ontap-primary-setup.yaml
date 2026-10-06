@@ -87,7 +87,7 @@ customization:
       - name: ONTAP Configuration Parameters
         icon: layer
         sections:
-          - name: Infrastructure
+          - name: Management Server
             icon: list
             inputs:
               - name: agent
@@ -100,13 +100,10 @@ customization:
               - name: cluster_location
               - name: cluster_mgmt_interface
               - name: cluster_mgmt_auto_revert
-              - name: ha_pair_count
-              - name: node_names
               - name: time_zone
               - name: cluster_login_banner
-          - name: Cluster Port parameters
+          - name: Service processor and data ports
             inputs:
-              - name: node_port_counts
               - name: sp_interfaces
                 type: object
                 header: Node Name,SP IP,Netmask,Gateway
@@ -139,11 +136,19 @@ customization:
               - name: snmp_contact
               - name: snmp_location
               - name: traphost_ip
+                visible: '{% if inputs.is_fips_enabled != "true" %}true{% else %}false{% endif %}'
               - name: snmp_community
+                visible: '{% if inputs.is_fips_enabled != "true" %}true{% else %}false{% endif %}'
               - name: snmp_v3_user
               - name: snmp_auth_protocol
+                visible: '{% if inputs.is_fips_enabled != "true" %}true{% else %}false{% endif %}'
+              - name: snmp_auth_protocol_fips
+                visible: '{% if inputs.is_fips_enabled == "true" %}true{% else %}false{% endif %}'
               - name: snmp_auth_password
               - name: snmp_priv_protocol
+                visible: '{% if inputs.is_fips_enabled != "true" %}true{% else %}false{% endif %}'
+              - name: snmp_priv_protocol_fips
+                visible: '{% if inputs.is_fips_enabled == "true" %}true{% else %}false{% endif %}'
               - name: snmp_priv_password
 
 inputs:
@@ -178,12 +183,6 @@ inputs:
     default: "true"
     allowed-values: ["true", "false"]
     description: Enable auto-revert on the cluster management interface.
-  node_port_counts:
-    type: string
-    default: ""
-    description: >-
-      Comma-separated data-port count per node, for example 2,2. The role
-      deletes (sum of these counts) times 2 default broadcast domains.
   sp_interfaces:
     type: string
     default: "[]"
@@ -196,16 +195,13 @@ inputs:
     description: >-
       One row per aggregate with Node Name, Aggregate Name, and Disk Count.
       Leave the table empty to skip.
-  ha_pair_count:
-    type: string
-    default: ""
-    description: Set to 1 to enable cluster HA on a two-node cluster. Leave empty to skip.
   data_ports:
     type: string
     default: "[]"
     description: >-
-      One row per node. Data Ports is a comma-separated list, for example
-      e0e,e0f. Leave the table empty to skip.
+      One row per node. Data Ports is a comma-separated list of ports used for
+      data traffic, for example e0e,e0f. Flow control is disabled only on these
+      ports. Leave the table empty to skip.
   dns_domain_name:
     type: string
     default: ""
@@ -218,11 +214,6 @@ inputs:
     type: string
     default: ""
     description: Comma-separated NTP server IP addresses.
-  node_names:
-    type: string
-    default: ""
-    description: >-
-      Comma-separated ONTAP node names. Used by storage failover and AutoSupport.
   time_zone:
     type: string
     default: ""
@@ -256,7 +247,10 @@ inputs:
   is_fips_enabled:
     type: string
     default: ""
-    description: Leave blank to skip. Enter true or false to set SSL FIPS mode.
+    allowed-values: ["", "true", "false"]
+    description: >-
+      Leave blank to leave cluster FIPS unchanged. Choose true to enable
+      FIPS-compliant SSL, or false to disable it. ONTAP starts with FIPS disabled.
   snmp_contact:
     type: string
     default: ""
@@ -268,12 +262,12 @@ inputs:
   traphost_ip:
     type: string
     default: ""
-    description: SNMP trap host. Applied only when FIPS is disabled.
+    description: Optional SNMP trap host. Leave empty to skip. Applied only when FIPS is not enabled.
   snmp_community:
     type: string
     sensitive: true
     default: ""
-    description: SNMPv1/v2c community. Applied only when FIPS is disabled.
+    description: Optional SNMPv1/v2c community. Leave empty to skip. Applied only when FIPS is not enabled.
   snmp_v3_user:
     type: string
     default: ""
@@ -281,7 +275,13 @@ inputs:
   snmp_auth_protocol:
     type: string
     default: sha
-    description: SNMPv3 authentication protocol.
+    allowed-values: ["none", "md5", "sha", "sha2_256"]
+    description: SNMPv3 authentication protocol when FIPS is off. A password is required unless this is none.
+  snmp_auth_protocol_fips:
+    type: string
+    default: sha
+    allowed-values: ["sha", "sha2_256"]
+    description: SNMPv3 authentication protocol when FIPS is on. Only sha and sha2_256 are compliant.
   snmp_auth_password:
     type: string
     sensitive: true
@@ -290,7 +290,13 @@ inputs:
   snmp_priv_protocol:
     type: string
     default: aes128
-    description: SNMPv3 privacy protocol.
+    allowed-values: ["none", "des", "aes128"]
+    description: SNMPv3 privacy protocol when FIPS is off. A password is required unless this is none.
+  snmp_priv_protocol_fips:
+    type: string
+    default: aes128
+    allowed-values: ["aes128"]
+    description: SNMPv3 privacy protocol when FIPS is on. aes128 is the only compliant value.
   snmp_priv_password:
     type: string
     sensitive: true
@@ -336,7 +342,6 @@ grains:
 
   delete_broadcast_domains:
     kind: ansible
-    when: '{% if .inputs.node_port_counts != "" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -347,7 +352,6 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        - node_port_counts: '{{ .inputs.node_port_counts }}'
 
   configure_sp_network:
     kind: ansible
@@ -415,7 +419,6 @@ grains:
 
   ensure_cluster_ha:
     kind: ansible
-    when: '{% if .inputs.ha_pair_count == "1" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -426,7 +429,6 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        - ha_pair_count: '{{ .inputs.ha_pair_count }}'
 
   disable_flow_control:
     kind: ansible
@@ -504,7 +506,6 @@ grains:
 
   enable_storage_failover:
     kind: ansible
-    when: '{% if .inputs.node_names != "" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -515,7 +516,6 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        - node_names: '{{ .inputs.node_names }}'
 
   set_timezone:
     kind: ansible
@@ -536,7 +536,7 @@ grains:
 
   configure_autosupport:
     kind: ansible
-    when: '{% if .inputs.node_names != "" and .inputs.autosupport_mail_hosts != "" and .inputs.autosupport_from_address != "" and .inputs.autosupport_to_addresses != "" %}true{% else %}false{% endif %}'
+    when: '{% if .inputs.autosupport_mail_hosts != "" and .inputs.autosupport_from_address != "" and .inputs.autosupport_to_addresses != "" %}true{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -547,7 +547,6 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        - node_names: '{{ .inputs.node_names }}'
         - autosupport_mail_hosts: '{{ .inputs.autosupport_mail_hosts }}'
         - autosupport_from_address: '{{ .inputs.autosupport_from_address }}'
         - autosupport_to_addresses: '{{ .inputs.autosupport_to_addresses }}'
@@ -586,7 +585,7 @@ grains:
 
   configure_snmp:
     kind: ansible
-    when: '{% if .inputs.snmp_contact != "" or .inputs.snmp_location != "" or .inputs.snmp_v3_user != "" or .inputs.snmp_community != "" or .inputs.traphost_ip != "" %}true{% else %}false{% endif %}'
+    when: '{% if .inputs.snmp_contact != "" and .inputs.snmp_location != "" and .inputs.snmp_v3_user != "" %}{% if .inputs.is_fips_enabled == "true" %}{% if .inputs.snmp_auth_password != "" and .inputs.snmp_priv_password != "" %}true{% else %}false{% endif %}{% else %}{% if .inputs.snmp_auth_protocol == "none" or .inputs.snmp_auth_password != "" %}{% if .inputs.snmp_priv_protocol == "none" or .inputs.snmp_priv_password != "" %}true{% else %}false{% endif %}{% else %}false{% endif %}{% endif %}{% else %}false{% endif %}'
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -604,8 +603,10 @@ grains:
         - snmp_community: '{{ .inputs.snmp_community }}'
         - snmp_v3_user: '{{ .inputs.snmp_v3_user }}'
         - snmp_auth_protocol: '{{ .inputs.snmp_auth_protocol }}'
+        - snmp_auth_protocol_fips: '{{ .inputs.snmp_auth_protocol_fips }}'
         - snmp_auth_password: '{{ .inputs.snmp_auth_password }}'
         - snmp_priv_protocol: '{{ .inputs.snmp_priv_protocol }}'
+        - snmp_priv_protocol_fips: '{{ .inputs.snmp_priv_protocol_fips }}'
         - snmp_priv_password: '{{ .inputs.snmp_priv_password }}'
 
   create_login_banner:

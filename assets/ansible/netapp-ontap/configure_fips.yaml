@@ -16,6 +16,12 @@
         https: true
         validate_certs: false
 
-    - name: Report FIPS mode
+    - name: Report that cluster FIPS mode is enabled
       ansible.builtin.debug:
-        msg: "Cluster FIPS mode is {{ 'enabled' if (is_fips_enabled | bool) else 'disabled' }}."
+        msg: Cluster FIPS mode is enabled.
+      when: is_fips_enabled | bool
+
+    - name: Report that cluster FIPS mode is disabled
+      ansible.builtin.debug:
+        msg: Cluster FIPS mode is disabled.
+      when: not (is_fips_enabled | bool)

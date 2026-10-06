@@ -21,18 +21,33 @@
       register: disk_info
       no_log: true
 
-    - name: Validate the discovered disk class
+    - name: Collect the disk classes returned by the cluster
+      ansible.builtin.set_fact:
+        disk_classes: >-
+          {{
+            disk_info.ontap_info.storage_disks.records
+            | default([])
+            | selectattr('class', 'defined')
+            | map(attribute='class')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+
+    - name: Validate one cluster-wide disk class
       ansible.builtin.assert:
         that:
           - disk_info.ontap_info.storage_disks.records | default([]) | length > 0
-          - disk_info.ontap_info.storage_disks.records[0].class is defined
-        fail_msg: No usable disk class was returned by the ONTAP cluster.
+          - disk_classes | length == 1
+        fail_msg: >-
+          Aggregate creation needs one cluster-wide disk class.
+          The cluster returned: {{ disk_classes | join(', ') | default('none', true) }}.
 
     - name: Print the disk class
       ansible.builtin.debug:
-        msg: "{{ disk_info.ontap_info.storage_disks.records[0].class }}"
+        msg: "{{ disk_classes[0] }}"
 
     - name: Export the disk class
       torque.collections.export_torque_outputs:
         outputs:
-          disk_class: "{{ disk_info.ontap_info.storage_disks.records[0].class }}"
+          disk_class: "{{ disk_classes[0] }}"

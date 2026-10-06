@@ -6,9 +6,31 @@
 
   tasks:
 
+    - name: Discover ONTAP cluster nodes
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+        use_python_keys: true
+        gather_subset:
+          - cluster/nodes
+        fields:
+          - name
+      register: node_info
+      no_log: true
+
     - name: Build AutoSupport lists
       ansible.builtin.set_fact:
-        node_list: "{{ node_names.split(',') | map('trim') | reject('equalto', '') | list }}"
+        node_list: >-
+          {{
+            node_info.ontap_info.cluster_nodes.records
+            | default([])
+            | map(attribute='name')
+            | list
+          }}
         mail_host_list: "{{ autosupport_mail_hosts.split(',') | map('trim') | reject('equalto', '') | list }}"
         to_address_list: "{{ autosupport_to_addresses.split(',') | map('trim') | reject('equalto', '') | list }}"
 
@@ -20,8 +42,8 @@
           - to_address_list | length > 0
           - autosupport_from_address | default('') | length > 0
         fail_msg: >-
-          AutoSupport needs node_names, mail hosts, a from address, and at
-          least one to address.
+          AutoSupport needs mail hosts, a from address, and at least one to
+          address. The cluster also has to return its node names.
 
     - name: Configure AutoSupport
       netapp.ontap.na_ontap_autosupport:

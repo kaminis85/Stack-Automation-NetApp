@@ -5,25 +5,26 @@
   gather_facts: false
 
   tasks:
+    - name: Choose the SNMP protocols for the FIPS mode
+      ansible.builtin.set_fact:
+        snmp_auth_protocol_selected: "{{ snmp_auth_protocol_fips if (is_fips_enabled | bool) else snmp_auth_protocol }}"
+        snmp_priv_protocol_selected: "{{ snmp_priv_protocol_fips if (is_fips_enabled | bool) else snmp_priv_protocol }}"
+
     - name: Validate SNMP inputs
       ansible.builtin.assert:
         that:
           - snmp_contact | default('') | length > 0
           - snmp_location | default('') | length > 0
           - snmp_v3_user | default('') | length > 0
-          - snmp_auth_password | default('') | length > 0
-          - snmp_priv_password | default('') | length > 0
+          - snmp_auth_protocol_selected in (['sha', 'sha2_256'] if (is_fips_enabled | bool) else ['none', 'md5', 'sha', 'sha2_256'])
+          - snmp_priv_protocol_selected in (['aes128'] if (is_fips_enabled | bool) else ['none', 'des', 'aes128'])
+          - snmp_auth_protocol_selected == 'none' or snmp_auth_password | default('') | length > 0
+          - snmp_priv_protocol_selected == 'none' or snmp_priv_password | default('') | length > 0
         fail_msg: >-
-          SNMP needs a contact, location, SNMPv3 user, and both SNMPv3 passwords.
-          Community and traphost are required only when FIPS is disabled.
-
-    - name: Validate SNMP community and traphost when FIPS is disabled
-      ansible.builtin.assert:
-        that:
-          - snmp_community | default('') | length > 0
-          - traphost_ip | default('') | length > 0
-        fail_msg: When FIPS is disabled, provide snmp_community and traphost_ip.
-      when: not (is_fips_enabled | bool)
+          SNMP needs a contact, location, and SNMPv3 user.
+          When FIPS is enabled, authentication must be sha or sha2_256 and privacy must be aes128.
+          Otherwise authentication can be none, md5, sha, or sha2_256, and privacy can be none, des, or aes128.
+          A password is required unless that protocol is none.
 
     - name: Configure SNMP contact
       netapp.ontap.na_ontap_rest_cli:
@@ -80,7 +81,9 @@
         password: "{{ ontap_password }}"
         https: true
         validate_certs: false
-      when: not (is_fips_enabled | bool)
+      when:
+        - not (is_fips_enabled | bool)
+        - traphost_ip | default('') | length > 0
 
     - name: Configure SNMP community
       netapp.ontap.na_ontap_snmp:
@@ -92,7 +95,9 @@
         password: "{{ ontap_password }}"
         https: true
         validate_certs: false
-      when: not (is_fips_enabled | bool)
+      when:
+        - not (is_fips_enabled | bool)
+        - snmp_community | default('') | length > 0
       no_log: true
 
     - name: Configure SNMPv3 access
@@ -102,10 +107,10 @@
         use_rest: always
         authentication_method: usm
         snmpv3:
-          authentication_protocol: "{{ snmp_auth_protocol }}"
-          authentication_password: "{{ snmp_auth_password }}"
-          privacy_protocol: "{{ snmp_priv_protocol }}"
-          privacy_password: "{{ snmp_priv_password }}"
+          authentication_protocol: "{{ snmp_auth_protocol_selected }}"
+          authentication_password: "{{ snmp_auth_password if snmp_auth_protocol_selected != 'none' else omit }}"
+          privacy_protocol: "{{ snmp_priv_protocol_selected }}"
+          privacy_password: "{{ snmp_priv_password if snmp_priv_protocol_selected != 'none' else omit }}"
         hostname: "{{ ontap_hostname }}"
         username: "{{ ontap_username }}"
         password: "{{ ontap_password }}"

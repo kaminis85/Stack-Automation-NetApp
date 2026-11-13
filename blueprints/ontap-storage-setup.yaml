@@ -1299,3 +1299,4 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
+        - autosupport_message: '{{ .inputs.autosupport_message }}'

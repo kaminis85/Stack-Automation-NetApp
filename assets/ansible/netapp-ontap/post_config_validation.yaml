@@ -78,29 +78,43 @@
           - 'subject'
           - 'generated_on'
       register: all_asups
-      until: >
-        ((all_asups.ontap_info['support/autosupport/messages'].records | sort(attribute='index', reverse=true) | first)['state']) in ['collection_failed', 'sent_successful', 'transmission_failed', 'ondemand_ignore']
+      vars:
+        asup_records: "{{ all_asups.ontap_info['support/autosupport/messages'].records | default([]) }}"
+        latest_index: "{{ asup_records | map(attribute='index') | map('int') | max }}"
+        latest_items: "{{ asup_records | selectattr('index', 'equalto', latest_index | int) | list }}"
+      until:
+        - asup_records | length > 0
+        - latest_items | map(attribute='state') | select('in', ['collection_failed', 'sent_successful', 'transmission_failed', 'ondemand_ignore']) | list | length == latest_items | length
       retries: 30
       delay: 10
       ignore_errors: true
 
     - name: Print the Auto support test status
       ansible.builtin.debug:
-        var: all_asups.ontap_info['support/autosupport/messages'].records | sort(attribute='index', reverse=true) | first
+        var: latest_items
+      vars:
+        asup_records: "{{ all_asups.ontap_info['support/autosupport/messages'].records | default([]) }}"
+        latest_index: "{{ asup_records | map(attribute='index') | map('int') | max }}"
+        latest_items: "{{ asup_records | selectattr('index', 'equalto', latest_index | int) | list }}"
 
     - name: Verify AutoSupport test status
       ansible.builtin.assert:
         that:
-          - latest_item.state != 'collection_failed' and latest_item.state != 'transmission_failed'
-        fail_msg: "AutoSupport FAILED! Status: {{ latest_item.state }}. Error: {{ latest_item}}"
+          - latest_items | length > 0
+          - failed_items | length == 0
+        fail_msg: "AutoSupport FAILED! Failed records: {{ failed_items | to_nice_json }}"
         success_msg: >-
-          {% if latest_item.state == 'sent_successful' %}
-          AutoSupport PASSED! Status: {{ latest_item.state }}
+          {% if pending_items | length == 0 and latest_items | map(attribute='state') | unique | list == ['sent_successful'] %}
+          AutoSupport PASSED! All {{ latest_items | length }} message(s) with index {{ latest_index }} are sent_successful.
           {% else %}
-          Timeout exceeded - AutoSupport collection is still in progress. Manually track this AutoSupport message. Details: {{ latest_item | to_nice_json }}
+          AutoSupport has no failures, but not all messages with index {{ latest_index }} are sent_successful. Manually track them. Details: {{ latest_items | to_nice_json }}
           {% endif %}
       vars:
-        latest_item: "{{ all_asups.ontap_info['support/autosupport/messages'].records | sort(attribute='index', reverse=true) | first }}"
+        asup_records: "{{ all_asups.ontap_info['support/autosupport/messages'].records | default([]) }}"
+        latest_index: "{{ asup_records | map(attribute='index') | map('int') | max }}"
+        latest_items: "{{ asup_records | selectattr('index', 'equalto', latest_index | int) | list }}"
+        failed_items: "{{ latest_items | selectattr('state', 'in', ['collection_failed', 'transmission_failed']) | list }}"
+        pending_items: "{{ latest_items | rejectattr('state', 'in', ['collection_failed', 'sent_successful', 'transmission_failed', 'ondemand_ignore']) | list }}"
 
     - name: Get the event logs
       netapp.ontap.na_ontap_rest_cli:

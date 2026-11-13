@@ -44,6 +44,8 @@
         - storage/disks
         fields: 
           - "state"
+          - "container_type"
+          - "error"
         https: true
         validate_certs: false
       register: disk_output
@@ -53,16 +55,43 @@
         that:
           - disk_output.ontap_info['storage/disks'].records | length > 0
         fail_msg: "No storage disk records were returned - cannot validate disk presence."
-
-    - name: Verify that all storage disks are present
+  
+    - name: Verify disks are present and none are broken
       ansible.builtin.assert:
         that:
-          - item.state == 'present'
-        fail_msg: "Disk {{ item.name }} is not present! Current state: {{ item.state }}"
-        success_msg: "Disk {{ item.name }} is present."
-      loop: "{{ disk_output.ontap_info['storage/disks'].records }}"
-      loop_control:
-        label: "{{ item.name }}"
+          - >-
+            disk_output.ontap_info['storage/disks'].records
+            | selectattr('state', 'ne', 'present')
+
+            | list | length == 0
+          - >-
+            disk_output.ontap_info['storage/disks'].records
+            | selectattr('container_type', 'in', ['broken', 'unknown', 'unsupported'])
+
+            | list | length == 0
+          - >-
+            disk_output.ontap_info['storage/disks'].records
+            | selectattr('error', 'defined')
+
+            | list | length == 0
+        fail_msg: >-
+          Disk pre-validation failed! Unhealthy disks found:
+          {{
+            disk_output.ontap_info['storage/disks'].records
+            | rejectattr('state', 'eq', 'present')
+            | list
+            +
+            disk_output.ontap_info['storage/disks'].records
+            | selectattr('container_type', 'in', ['broken', 'unknown', 'unsupported'])
+            | list
+            +
+            disk_output.ontap_info['storage/disks'].records
+            | selectattr('error', 'defined')
+            | list
+          }}
+        success_msg: >-
+          Pre-validation passed: All {{ disk_output.ontap_info['storage/disks'].records | length }} disks are present and healthy.
+          {{ disk_output.ontap_info['storage/disks'].records }}
 
     - name: Get Disk Shelf Information
       netapp.ontap.na_ontap_rest_cli:
@@ -87,37 +116,33 @@
         label: "{{ item.shelf }}"
 
     - name: Get root aggregate information
-      netapp.ontap.na_ontap_rest_info:
+      netapp.ontap.na_ontap_rest_cli:
         hostname: "{{ ontap_hostname }}"
         username: "{{ ontap_username }}"
         password: "{{ ontap_password }}"
-        gather_subset:
-        - storage/aggregates
-        fields: 
-          - state
-        https: true
+        command: storage/aggregate
+        params:
+          root: "true"
+          fields: state
+        verb: GET
         validate_certs: false
       register: aggregate_output
     
-    - name: Print root aggregates
-      ansible.builtin.debug:
-        var: aggregate_output
-
     - name: Verify root aggregate information is not empty
       ansible.builtin.assert:
         that:
-          - aggregate_output.ontap_info['storage/aggregates'].records | length > 0
+          - (aggregate_output.msg.num_records | default(0)) > 0
         fail_msg: "No aggregate records were returned - cannot validate root aggregates."
 
     - name: Verify that all root aggregates are online
       ansible.builtin.assert:
          that:
            - item.state == 'online'
-         fail_msg: "Aggregate {{ item.name }} is not online! Current state: {{ item.state }}"
-         success_msg: "Aggregate {{ item.name }} is online."
-      loop: "{{ aggregate_output.ontap_info['storage/aggregates'].records }}"
+         fail_msg: "Aggregate {{ item.aggregate }} is not online! Current state: {{ item.state }}"
+         success_msg: "Aggregate {{ item.aggregate }} is online."
+      loop: "{{ aggregate_output.msg.records }}"
       loop_control:
-         label: "{{ item.name }}"
+         label: "{{ item.aggregate }}"
     
     - name: Get logical interface information
       netapp.ontap.na_ontap_rest_info:

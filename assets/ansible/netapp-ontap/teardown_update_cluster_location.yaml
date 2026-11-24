@@ -1,0 +1,88 @@
+---
+# Undo of update_cluster_location.yaml: clear the cluster location when it
+# still matches the form. End does not rename the cluster. Safe to run twice.
+- name: Clear the ONTAP cluster location
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_cluster:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    location_requested: "{{ cluster_location | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that no cluster location was named
+      ansible.builtin.debug:
+        msg: No cluster location was named, so End leaves the cluster unchanged.
+      when: location_requested | length == 0
+
+    - name: Stop when no cluster location was named
+      when: location_requested | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read the cluster
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - cluster
+        fields:
+          - name
+          - location
+      register: cluster_info
+
+    - name: Record the cluster name and location
+      ansible.builtin.set_fact:
+        live_name: "{{ cluster_record.name | default('') | string | trim }}"
+        live_location: "{{ cluster_record.location | default('') | string | trim }}"
+      vars:
+        cluster_body: "{{ cluster_info.ontap_info.cluster | default({}) }}"
+        cluster_record: >-
+          {{
+            cluster_body
+            if (cluster_body.name | default('') | string | length > 0)
+            else ((cluster_body.records | default([{}])) | first | default({}))
+          }}
+
+    - name: Confirm the cluster was read
+      ansible.builtin.assert:
+        that:
+          - live_name | length > 0
+        fail_msg: The cluster did not return its name.
+
+    - name: Note that the location no longer matches the form
+      ansible.builtin.debug:
+        msg: >-
+          The cluster location is '{{ live_location }}', not
+          '{{ location_requested }}', so End leaves it unchanged.
+      when: live_location != location_requested
+
+    - name: Stop when the location no longer matches the form
+      when: live_location != location_requested
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Clear the cluster location
+      netapp.ontap.na_ontap_cluster:
+        state: present
+        cluster_name: "{{ live_name }}"
+        cluster_location: ""
+
+    - name: Report the cleared location
+      ansible.builtin.debug:
+        msg: "Cleared the cluster location on {{ live_name }}. The cluster name was left unchanged."

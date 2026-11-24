@@ -1,0 +1,210 @@
+---
+# Undo of configure_nfs_lif.yaml: delete the NFS LIFs.
+# The SVM and the VLAN interfaces are deleted after this, because this grain
+# depends on them. A LIF that is already gone is not an error.
+- name: Delete the NFS LIFs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_interface:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    node_rows: >-
+      {{
+        [] if (node_specs | default('[]') | string | trim) in ['', '[]']
+        else (node_specs | from_json if node_specs is string else node_specs)
+      }}
+    raw_protocols: "{{ allowed_protocols | default('[]') }}"
+    decoded_protocols: >-
+      {{
+        [] if (raw_protocols | string | trim) in ['', '[]']
+        else (
+          raw_protocols | from_json
+          if raw_protocols is string and (raw_protocols | string | trim) is match('^\\[')
+          else (
+            raw_protocols if raw_protocols is not string
+            else raw_protocols.split(',')
+          )
+        )
+      }}
+    protocol_list: >-
+      {{
+        decoded_protocols
+        | map('string')
+        | map('trim')
+        | map('lower')
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+  tasks:
+
+    - name: Note that NFS LIFs were not requested
+      ansible.builtin.debug:
+        msg: NFS is not selected or the SVM name is blank, so no NFS LIF was deleted.
+      when: svm_name_normalized | length == 0 or 'nfs' not in protocol_list
+
+    - name: Stop when NFS LIFs were not requested
+      when: svm_name_normalized | length == 0 or 'nfs' not in protocol_list
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Normalize node rows
+      ansible.builtin.set_fact:
+        node_plan: "{{ node_plan | default([]) + [normalized_row] }}"
+      vars:
+        normalized_row:
+          nfs_lif_name: "{{ item.nfs_lif_name | default(item['NFS LIF Name'], true) | default('', true) | trim }}"
+      loop: "{{ node_rows }}"
+      loop_control:
+        label: "{{ item.nfs_lif_name | default(item['NFS LIF Name'], true) | default('unnamed row', true) }}"
+
+    - name: Collect NFS LIF names
+      ansible.builtin.set_fact:
+        lif_names: "{{ lif_names | default([]) + [item.nfs_lif_name] }}"
+      loop: "{{ node_plan | default([]) }}"
+      when: item.nfs_lif_name | length > 0
+      loop_control:
+        label: "{{ item.nfs_lif_name }}"
+
+    - name: Note that no NFS LIF name was provided
+      ansible.builtin.debug:
+        msg: No NFS LIF name was provided, so no NFS LIF was deleted.
+      when: lif_names | default([]) | length == 0
+
+    - name: Stop when no NFS LIF name was provided
+      when: lif_names | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: SVM {{ svm_name_normalized }} is already gone, so its NFS LIFs are already gone.
+      when: not (svm_is_present | bool)
+
+    - name: Stop when the SVM is already gone
+      when: not (svm_is_present | bool)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete the NFS LIFs
+      netapp.ontap.na_ontap_interface:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+        interface_name: "{{ item }}"
+      loop: "{{ lif_names | unique }}"
+      loop_control:
+        label: "{{ item }}"
+      register: lif_delete
+      failed_when: false
+
+    - name: Confirm the NFS LIFs were deleted
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false))
+        fail_msg: >-
+          Deleting NFS LIF {{ item.item }} failed:
+          {{ item.msg | default('') }}
+        success_msg: "NFS LIF {{ item.item }} delete accepted"
+      loop: "{{ lif_delete.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Wait until the NFS LIFs are gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ip/interfaces
+        parameters:
+          svm.name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: lif_check
+      failed_when: false
+      until: >-
+        not (lif_check.failed | default(false)) and (
+          (
+            ((lif_check.ontap_info | default({})).network_ip_interfaces | default({})).records
+            | default([])
+            | map(attribute='name')
+            | list
+          ) | intersect(lif_names | unique) | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the NFS LIFs are gone
+      ansible.builtin.assert:
+        that:
+          - not (lif_check.failed | default(false))
+          - (
+              (
+                ((lif_check.ontap_info | default({})).network_ip_interfaces | default({})).records
+                | default([])
+                | map(attribute='name')
+                | list
+              ) | intersect(lif_names | unique) | length
+            ) == 0
+        fail_msg: >-
+          An NFS LIF is still present after the delete.
+          {{ lif_check.msg | default('') }}
+        success_msg: "NFS LIFs are gone"

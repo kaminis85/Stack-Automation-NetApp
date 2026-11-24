@@ -1,0 +1,122 @@
+---
+# Undo of configure_sp_network.yaml: set the service-processor IPv4 config back
+# to DHCP when it still has the address from the form. Disabling IPv4 fails on
+# these nodes (ONTAP error 13631588), so DHCP is used instead. The static
+# address is released. Safe to run twice.
+- name: Disable ONTAP service-processor network interfaces
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_cli:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    node_rows: >-
+      {{
+        [] if (node_specs | default('[]') | string | trim) in ['', '[]']
+        else (node_specs | from_json if node_specs is string else node_specs)
+      }}
+
+  tasks:
+
+    - name: Normalize node rows
+      ansible.builtin.set_fact:
+        node_plan: "{{ node_plan | default([]) + [normalized_row] }}"
+      vars:
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) | trim }}"
+          ip: "{{ item.ip | default(item['SP IP'], true) | default('', true) | trim }}"
+          mask: "{{ item.mask | default(item['SP Netmask'], true) | default('', true) | trim }}"
+          gateway: "{{ item.gateway | default(item['SP Gateway'], true) | default('', true) | trim }}"
+      loop: "{{ node_rows }}"
+      loop_control:
+        label: "{{ item.node_name | default(item['Node Name'], true) | default('unnamed row', true) }}"
+
+    - name: Select service-processor rows
+      ansible.builtin.set_fact:
+        sp_plan: "{{ sp_plan | default([]) + [item] }}"
+      loop: "{{ node_plan | default([]) }}"
+      when: item.node_name | length > 0 and item.ip | length > 0
+      loop_control:
+        label: "{{ item.node_name }}"
+
+    - name: Note that no service-processor address was named
+      ansible.builtin.debug:
+        msg: No service-processor address was named, so End leaves the service processor unchanged.
+      when: sp_plan | default([]) | length == 0
+
+    - name: Stop when no service-processor address was named
+      when: sp_plan | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read the service-processor network
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/service-processor/network
+        verb: GET
+        params:
+          node: "{{ item.node_name }}"
+          address-family: IPv4
+          fields: enable,ip-address
+      loop: "{{ sp_plan }}"
+      loop_control:
+        label: "{{ item.node_name }}"
+      register: sp_show
+
+    - name: Select nodes that still have the address from the form
+      ansible.builtin.set_fact:
+        nodes_to_disable: "{{ nodes_to_disable | default([]) + [item.item.node_name] }}"
+      vars:
+        sp_record: >-
+          {{
+            (item.msg.records | default([item.msg | default({})]))
+            | first
+            | default({})
+          }}
+        live_ip: >-
+          {{
+            sp_record.ip_address
+            | default(sp_record['ip-address'] | default(''))
+            | string
+            | trim
+          }}
+      loop: "{{ sp_show.results }}"
+      when: live_ip == (item.item.ip | string | trim)
+      loop_control:
+        label: "{{ item.item.node_name }}"
+
+    - name: Note that the service-processor address no longer matches the form
+      ansible.builtin.debug:
+        msg: No service processor still has the address from the form, so End leaves them unchanged.
+      when: nodes_to_disable | default([]) | length == 0
+
+    - name: Stop when the service-processor address no longer matches the form
+      when: nodes_to_disable | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    # ONTAP rejects this PATCH without enable (target enable, code 2).
+    # Leave IPv4 enabled. Disabling it fails on these nodes (error 13631588).
+    - name: Set the service-processor IPv4 configuration back to DHCP
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/service-processor/network
+        verb: PATCH
+        params:
+          node: "{{ item }}"
+          address-family: IPv4
+        body:
+          enable: "true"
+          dhcp: v4
+      loop: "{{ nodes_to_disable }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Report the nodes
+      ansible.builtin.debug:
+        msg: "Set the service-processor IPv4 configuration to DHCP on {{ nodes_to_disable | join(', ') }}."

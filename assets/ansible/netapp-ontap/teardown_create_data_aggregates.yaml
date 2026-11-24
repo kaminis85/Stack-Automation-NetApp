@@ -1,0 +1,243 @@
+---
+# Undo of create_data_aggregates.yaml: delete the data aggregates named in
+# the node configuration rows. The SVM, its root volume, the audit log
+# volume, and the load-sharing mirror volumes are already gone, because
+# those grains depend on this one. Node root aggregates (aggr0 / aggr0_*)
+# are never deleted. Safe to run twice.
+- name: Delete ONTAP data aggregates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_aggregate:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_rest_cli:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    node_rows: >-
+      {{
+        [] if (node_specs | default('[]') | string | trim) in ['', '[]']
+        else (node_specs | from_json if node_specs is string else node_specs)
+      }}
+
+  tasks:
+
+    - name: Normalize node rows
+      ansible.builtin.set_fact:
+        node_plan: "{{ node_plan | default([]) + [normalized_row] }}"
+      vars:
+        normalized_row:
+          aggregate_name: "{{ item.aggregate_name | default(item['Aggregate Name'], true) | default('', true) | trim }}"
+      loop: "{{ node_rows }}"
+      loop_control:
+        label: "{{ item.aggregate_name | default(item['Aggregate Name'], true) | default('unnamed row', true) }}"
+
+    - name: Collect aggregate names
+      ansible.builtin.set_fact:
+        aggregate_names: "{{ aggregate_names | default([]) + [item.aggregate_name] }}"
+      loop: "{{ node_plan | default([]) }}"
+      when: item.aggregate_name | length > 0
+      loop_control:
+        label: "{{ item.aggregate_name }}"
+
+    - name: Note that no aggregate was requested
+      ansible.builtin.debug:
+        msg: No aggregate name was provided, so no aggregate was deleted.
+      when: aggregate_names | default([]) | unique | list | length == 0
+
+    - name: Stop when no aggregate was requested
+      when: aggregate_names | default([]) | unique | list | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Keep the aggregate names once
+      ansible.builtin.set_fact:
+        aggregate_names: "{{ aggregate_names | unique | list }}"
+
+    - name: Refuse aggregate names that belong to a node root aggregate
+      ansible.builtin.assert:
+        that:
+          - item != 'aggr0'
+          - not (item is match('^aggr0_'))
+        fail_msg: >-
+          {{ item }} is a node root aggregate name and will not be deleted.
+      loop: "{{ aggregate_names }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Read aggregate root flags
+      netapp.ontap.na_ontap_rest_cli:
+        command: storage/aggregate
+        verb: GET
+        params:
+          aggregate: "{{ item }}"
+          fields: aggregate,root
+      loop: "{{ aggregate_names }}"
+      loop_control:
+        label: "{{ item }}"
+      register: root_lookup
+      failed_when: false
+
+    - name: Confirm each aggregate lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false)) or aggregate_is_missing
+        fail_msg: >-
+          Could not read aggregate {{ item.item }}:
+          {{ item.msg | default('') }}
+      vars:
+        message: "{{ item.msg | default('') | string | lower }}"
+        aggregate_is_missing: >-
+          {{
+            'not exist' in message
+            or 'not found' in message
+            or "doesn't exist" in message
+            or 'does not exist' in message
+          }}
+      loop: "{{ root_lookup.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Refuse to delete a root aggregate
+      ansible.builtin.assert:
+        that:
+          - not (root_value | bool)
+        fail_msg: >-
+          {{ item.item }} is a node root aggregate and will not be deleted.
+      vars:
+        record: "{{ ((item.msg | default({})).records | default([]) | first) | default({}) }}"
+        root_value: "{{ record.root | default(record['is-root'] | default(false)) }}"
+      loop: "{{ root_lookup.results }}"
+      when:
+        - not (item.failed | default(false))
+        - (item.msg | default({})).records | default([]) | length > 0
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Wait until no volumes remain on the data aggregates
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - storage/volumes
+        fields:
+          - name
+          - aggregates
+      register: volume_check
+      failed_when: false
+      until: >-
+        not (volume_check.failed | default(false)) and (
+          (
+            ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+            | default([])
+            | map(attribute='aggregates')
+            | default([])
+            | flatten
+            | selectattr('name', 'defined')
+            | map(attribute='name')
+            | list
+          ) | intersect(aggregate_names) | length
+        ) == 0
+      retries: 30
+      delay: 10
+
+    - name: Confirm the data aggregates have no volumes
+      ansible.builtin.assert:
+        that:
+          - not (volume_check.failed | default(false))
+          - volumes_on_data_aggregates | length == 0
+        fail_msg: >-
+          Volumes are still on these data aggregates, so the aggregates were
+          not deleted: {{ volumes_on_data_aggregates | join(', ') }}.
+          {{ volume_check.msg | default('') }}
+        success_msg: "Data aggregates have no volumes"
+      vars:
+        volumes_on_data_aggregates: >-
+          {{
+            (
+              ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+              | default([])
+              | map(attribute='aggregates')
+              | default([])
+              | flatten
+              | selectattr('name', 'defined')
+              | map(attribute='name')
+              | list
+            ) | intersect(aggregate_names)
+          }}
+
+    - name: Delete the data aggregates
+      netapp.ontap.na_ontap_aggregate:
+        state: absent
+        name: "{{ item }}"
+        time_out: 600
+      loop: "{{ aggregate_names }}"
+      loop_control:
+        label: "{{ item }}"
+      register: aggregate_delete
+      failed_when: false
+
+    - name: Confirm the data aggregates were deleted
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false))
+        fail_msg: >-
+          Deleting aggregate {{ item.item }} failed:
+          {{ item.msg | default('') }}
+        success_msg: "Aggregate {{ item.item }} delete accepted"
+      loop: "{{ aggregate_delete.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Wait until the data aggregates are gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - storage/aggregates
+        fields:
+          - name
+      register: aggregate_check
+      failed_when: false
+      until: >-
+        not (aggregate_check.failed | default(false)) and (
+          (
+            ((aggregate_check.ontap_info | default({})).storage_aggregates | default({})).records
+            | default([])
+            | map(attribute='name')
+            | list
+          ) | intersect(aggregate_names) | length
+        ) == 0
+      retries: 30
+      delay: 10
+
+    - name: Confirm the data aggregates are gone
+      ansible.builtin.assert:
+        that:
+          - not (aggregate_check.failed | default(false))
+          - (
+              (
+                ((aggregate_check.ontap_info | default({})).storage_aggregates | default({})).records
+                | default([])
+                | map(attribute='name')
+                | list
+              ) | intersect(aggregate_names) | length
+            ) == 0
+        fail_msg: >-
+          A data aggregate is still present after the delete.
+          {{ aggregate_check.msg | default('') }}
+        success_msg: "Data aggregates are gone"

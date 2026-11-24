@@ -1,0 +1,84 @@
+---
+# Undo of configure_ntp.yaml: delete the NTP servers named on the form.
+# Safe to run twice. A server that is already gone is not an error.
+- name: Delete ONTAP NTP servers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_ntp:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    ntp_server_list: "{{ (ntp_servers | default('') | string).split(',') | map('trim') | reject('equalto', '') | list }}"
+
+  tasks:
+
+    - name: Note that no NTP server was named
+      ansible.builtin.debug:
+        msg: No NTP server was named, so End leaves NTP unchanged.
+      when: ntp_server_list | length == 0
+
+    - name: Stop when no NTP server was named
+      when: ntp_server_list | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read NTP servers
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - cluster/ntp/servers
+        fields:
+          - server
+      register: ntp_info
+
+    - name: Select NTP servers that are still present
+      ansible.builtin.set_fact:
+        servers_to_delete: "{{ servers_to_delete | default([]) + [item] }}"
+      vars:
+        existing_servers: >-
+          {{
+            (ntp_info.ontap_info.cluster_ntp_servers | default({})).records
+            | default([])
+            | map(attribute='server')
+            | map('string')
+            | map('trim')
+            | list
+          }}
+      loop: "{{ ntp_server_list }}"
+      when: item in existing_servers
+
+    - name: Note that the NTP servers are already gone
+      ansible.builtin.debug:
+        msg: The NTP servers named on the form are already gone.
+      when: servers_to_delete | default([]) | length == 0
+
+    - name: Stop when the NTP servers are already gone
+      when: servers_to_delete | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete the NTP servers
+      netapp.ontap.na_ontap_ntp:
+        state: absent
+        server_name: "{{ item }}"
+      loop: "{{ servers_to_delete }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Report the deleted NTP servers
+      ansible.builtin.debug:
+        msg: "Deleted NTP servers {{ servers_to_delete | join(', ') }}."

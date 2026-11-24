@@ -1,0 +1,97 @@
+---
+# Undo of configure_svm_login_banner.yaml: clear the SVM login banner when it
+# still matches the banner from the form. The SVM is still present, because
+# this grain depends on configure_ontap_svm and End runs that teardown later.
+# Safe to run twice.
+- name: Clear the SVM login banner
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_login_messages:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    banner_requested: "{{ svm_login_banner | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that the SVM name or banner is blank
+      ansible.builtin.debug:
+        msg: The SVM name or login banner is blank, so End leaves the banner unchanged.
+      when: svm_name_normalized | length == 0 or banner_requested | trim | length == 0
+
+    - name: Stop when the SVM name or banner is blank
+      when: svm_name_normalized | length == 0 or banner_requested | trim | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Read the SVM login banner
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - security/login/messages
+        parameters:
+          scope: svm
+          svm.name: "{{ svm_name_normalized }}"
+        fields:
+          - banner
+          - scope
+          - svm.name
+      register: banner_info
+
+    # ONTAP returns the banner with a trailing newline when the form did not
+    # include one. Compare the same way na_ontap_login_messages does.
+    # The create task trims the form text before it writes the banner.
+    - name: Record the SVM login banner
+      ansible.builtin.set_fact:
+        live_value: "{{ live_banner }}"
+      vars:
+        banner_records: "{{ (banner_info.ontap_info.security_login_messages | default({})).records | default([]) }}"
+        banner_record: "{{ banner_records | first | default({}) }}"
+        banner_raw: "{{ banner_record.banner | default('') | string }}"
+        live_banner: "{{ banner_raw if (banner_requested[-1:] == '\n') else banner_raw.rstrip('\n') }}"
+
+    - name: Note that the SVM banner no longer matches the form
+      ansible.builtin.debug:
+        msg: >-
+          The SVM login banner is {{ live_value | to_json }}, not
+          {{ banner_requested | to_json }}, so End leaves it unchanged.
+      when: live_value != banner_requested
+
+    - name: Stop when the SVM banner no longer matches the form
+      when: live_value != banner_requested
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Clear the SVM login banner
+      netapp.ontap.na_ontap_login_messages:
+        vserver: "{{ svm_name_normalized }}"
+        banner: ""
+
+    - name: Report the cleared SVM login banner
+      ansible.builtin.debug:
+        msg: "Cleared the login banner on SVM {{ svm_name_normalized }}."

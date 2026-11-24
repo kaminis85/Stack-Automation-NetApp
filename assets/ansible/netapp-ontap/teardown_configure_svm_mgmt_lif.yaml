@@ -1,0 +1,158 @@
+---
+# Undo of configure_svm_mgmt_lif.yaml: delete the SVM management LIF.
+# The default route is already gone, because that grain depends on this one.
+# The SVM and the VLAN interfaces are deleted after this, because this grain
+# depends on them. Safe to run twice.
+- name: Delete the SVM management LIF
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_interface:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    svm_mgmt_lif_name_normalized: "{{ svm_mgmt_lif_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that the management LIF was not requested
+      ansible.builtin.debug:
+        msg: The SVM name or management LIF name is blank, so the LIF was not deleted.
+      when: svm_name_normalized | length == 0 or svm_mgmt_lif_name_normalized | length == 0
+
+    - name: Stop when the management LIF was not requested
+      when: svm_name_normalized | length == 0 or svm_mgmt_lif_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Validate svm_mgmt_lif_name
+      ansible.builtin.assert:
+        that:
+          - svm_mgmt_lif_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,254}$')
+        fail_msg: >-
+          svm_mgmt_lif_name must start with a letter or underscore and contain
+          only letters, numbers, underscores, hyphens, and periods.
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: >-
+          SVM {{ svm_name_normalized }} is already gone, so management LIF
+          {{ svm_mgmt_lif_name_normalized }} is already gone.
+      when: not (svm_is_present | bool)
+
+    - name: Stop when the SVM is already gone
+      when: not (svm_is_present | bool)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete the SVM management LIF
+      netapp.ontap.na_ontap_interface:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+        interface_name: "{{ svm_mgmt_lif_name_normalized }}"
+      register: lif_delete
+      failed_when: false
+
+    - name: Confirm the management LIF was deleted
+      ansible.builtin.assert:
+        that:
+          - not (lif_delete.failed | default(false))
+        fail_msg: >-
+          Deleting LIF {{ svm_mgmt_lif_name_normalized }} failed:
+          {{ lif_delete.msg | default('') }}
+        success_msg: "LIF {{ svm_mgmt_lif_name_normalized }} delete accepted"
+
+    - name: Wait until the management LIF is gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ip/interfaces
+        parameters:
+          name: "{{ svm_mgmt_lif_name_normalized }}"
+          svm.name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: lif_check
+      failed_when: false
+      until: >-
+        not (lif_check.failed | default(false)) and (
+          ((lif_check.ontap_info | default({})).network_ip_interfaces | default({})).records
+          | default([])
+          | selectattr('name', 'equalto', svm_mgmt_lif_name_normalized)
+          | list
+          | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the management LIF is gone
+      ansible.builtin.assert:
+        that:
+          - not (lif_check.failed | default(false))
+          - (
+              ((lif_check.ontap_info | default({})).network_ip_interfaces | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_mgmt_lif_name_normalized)
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          LIF {{ svm_mgmt_lif_name_normalized }} is still present after the delete.
+          {{ lif_check.msg | default('') }}
+        success_msg: "LIF {{ svm_mgmt_lif_name_normalized }} is gone"

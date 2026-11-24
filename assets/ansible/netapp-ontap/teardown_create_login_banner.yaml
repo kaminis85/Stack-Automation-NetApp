@@ -1,0 +1,80 @@
+---
+# Undo of create_login_banner.yaml: clear the cluster login banner when it
+# still matches the banner from the form. Safe to run twice.
+- name: Clear the ONTAP cluster login banner
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_login_messages:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    banner_requested: "{{ cluster_login_banner | default('') | string }}"
+
+  tasks:
+
+    - name: Note that no login banner was named
+      ansible.builtin.debug:
+        msg: No cluster login banner was named, so End leaves it unchanged.
+      when: banner_requested | trim | length == 0
+
+    - name: Stop when no login banner was named
+      when: banner_requested | trim | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read the cluster login banner
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - security/login/messages
+        parameters:
+          scope: cluster
+        fields:
+          - banner
+          - scope
+      register: banner_info
+
+    # ONTAP returns the banner with a trailing newline when the form did not
+    # include one. Compare the same way na_ontap_login_messages does.
+    - name: Record the login banner
+      ansible.builtin.set_fact:
+        live_value: "{{ live_banner }}"
+      vars:
+        banner_records: "{{ (banner_info.ontap_info.security_login_messages | default({})).records | default([]) }}"
+        banner_record: "{{ banner_records | first | default({}) }}"
+        banner_raw: "{{ banner_record.banner | default('') | string }}"
+        live_banner: "{{ banner_raw if (banner_requested[-1:] == '\n') else banner_raw.rstrip('\n') }}"
+
+    - name: Note that the banner no longer matches the form
+      ansible.builtin.debug:
+        msg: >-
+          The cluster login banner is {{ live_value | to_json }}, not
+          {{ banner_requested | to_json }}, so End leaves it unchanged.
+      when: live_value != banner_requested
+
+    - name: Stop when the banner no longer matches the form
+      when: live_value != banner_requested
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Clear the cluster login banner
+      netapp.ontap.na_ontap_login_messages:
+        banner: ""
+
+    - name: Report the cleared login banner
+      ansible.builtin.debug:
+        msg: Cleared the cluster login banner.

@@ -1,0 +1,141 @@
+---
+# Undo of configure_broadcast_domains.yaml: delete the broadcast domains
+# created for in-band management, NFS, and the two iSCSI VLANs.
+# VLAN interfaces are already gone, because that grain depends on this one.
+# The IPspace is deleted after this. Default and Cluster are never deleted.
+# Safe to run twice.
+- name: Delete ONTAP broadcast domains
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_broadcast_domain:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    ipspace_name_normalized: "{{ ipspace_name | default('') | string | trim }}"
+    network_inputs:
+      - role: In-band management
+        name: "{{ ib_mgmt_vlan_name | default('') | string | trim }}"
+      - role: NFS
+        name: "{{ nfs_vlan_name | default('') | string | trim }}"
+      - role: iSCSI-A
+        name: "{{ iscsi_a_vlan_name | default('') | string | trim }}"
+      - role: iSCSI-B
+        name: "{{ iscsi_b_vlan_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Select networks that have a VLAN name
+      ansible.builtin.set_fact:
+        vlan_plan: "{{ network_inputs | selectattr('name') | list }}"
+
+    - name: Note that no VLAN name was provided
+      ansible.builtin.debug:
+        msg: No VLAN name was provided, so no broadcast domain was deleted.
+      when: vlan_plan | length == 0
+
+    - name: Stop when no VLAN name was provided
+      when: vlan_plan | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the IPspace name
+      ansible.builtin.assert:
+        that:
+          - ipspace_name_normalized | length > 0
+          - ipspace_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,63}$')
+          - ipspace_name_normalized | lower not in ['default', 'cluster']
+        fail_msg: >-
+          Broadcast domains are deleted from the IPspace. Enter a name that
+          starts with a letter or underscore. Default and Cluster already
+          exist and cannot be used here.
+
+    - name: Validate VLAN names
+      ansible.builtin.assert:
+        that:
+          - item.name is match('^[A-Za-z_][A-Za-z0-9_.-]{0,63}$')
+          - item.name | lower not in ['default', 'cluster']
+        fail_msg: >-
+          {{ item.role }} VLAN name must start with a letter or underscore and
+          contain only letters, numbers, underscores, hyphens, and periods.
+          Default and Cluster are reserved.
+      loop: "{{ vlan_plan }}"
+      loop_control:
+        label: "{{ item.role }}"
+
+    - name: Delete the broadcast domains
+      netapp.ontap.na_ontap_broadcast_domain:
+        state: absent
+        name: "{{ item.name }}"
+        ipspace: "{{ ipspace_name_normalized }}"
+      loop: "{{ vlan_plan }}"
+      loop_control:
+        label: "{{ item.role }} {{ item.name }}"
+      register: domain_delete
+      failed_when: false
+
+    - name: Confirm the broadcast domains were deleted
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false))
+        fail_msg: >-
+          Deleting broadcast domain {{ item.item.name }} failed:
+          {{ item.msg | default('') }}
+        success_msg: "Broadcast domain {{ item.item.name }} delete accepted"
+      loop: "{{ domain_delete.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Wait until the broadcast domains are gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ethernet/broadcast-domains
+        parameters:
+          ipspace.name: "{{ ipspace_name_normalized }}"
+        fields:
+          - name
+          - ipspace
+      register: domain_check
+      failed_when: false
+      until: >-
+        not (domain_check.failed | default(false)) and (
+          (
+            ((domain_check.ontap_info | default({})).network_ethernet_broadcast_domains | default({})).records
+            | default([])
+            | map(attribute='name')
+            | list
+          ) | intersect(vlan_plan | map(attribute='name') | list) | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the broadcast domains are gone
+      ansible.builtin.assert:
+        that:
+          - not (domain_check.failed | default(false))
+          - (
+              (
+                ((domain_check.ontap_info | default({})).network_ethernet_broadcast_domains | default({})).records
+                | default([])
+                | map(attribute='name')
+                | list
+              ) | intersect(vlan_plan | map(attribute='name') | list) | length
+            ) == 0
+        fail_msg: >-
+          A broadcast domain is still present after the delete.
+          {{ domain_check.msg | default('') }}
+        success_msg: "Broadcast domains are gone"

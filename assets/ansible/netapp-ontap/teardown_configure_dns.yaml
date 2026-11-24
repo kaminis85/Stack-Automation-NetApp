@@ -1,0 +1,100 @@
+---
+# Undo of configure_dns.yaml: remove cluster DNS when the servers and domain
+# still match the form. Safe to run twice.
+- name: Delete ONTAP cluster DNS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_dns:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    dns_server_list: "{{ (dns_servers | default('') | string).split(',') | map('trim') | reject('equalto', '') | list }}"
+    dns_domain_requested: "{{ dns_domain_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that DNS was not named on the form
+      ansible.builtin.debug:
+        msg: No DNS servers or domain were named, so End leaves DNS unchanged.
+      when: dns_server_list | length == 0 or dns_domain_requested | length == 0
+
+    - name: Stop when DNS was not named on the form
+      when: dns_server_list | length == 0 or dns_domain_requested | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Read cluster DNS
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - name-services/dns
+        # Specify 'scope' as 'cluster' to retrieve the DNS configuration of the cluster.
+        parameters:
+          scope: cluster
+        fields:
+          - servers
+          - domains
+      register: dns_info
+
+    - name: Record cluster DNS
+      ansible.builtin.set_fact:
+        dns_servers_live: "{{ dns_servers_live }}"
+        dns_domains_live: "{{ dns_domains_live }}"
+      vars:
+        dns_records: "{{ (dns_info.ontap_info.name_services_dns | default({})).records | default([]) }}"
+        dns_record: "{{ dns_records | first | default({}) }}"
+        dns_servers_live: >-
+          {{
+            dns_record.servers
+            | default([])
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | list
+          }}
+        dns_domains_live: >-
+          {{
+            dns_record.domains
+            | default([])
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | list
+          }}
+
+    - name: Note that cluster DNS no longer matches the form
+      ansible.builtin.debug:
+        msg: Cluster DNS no longer matches the form, so End leaves it unchanged.
+      when: >-
+        (dns_servers_live | sort) != (dns_server_list | sort)
+        or dns_domains_live != [dns_domain_requested]
+
+    - name: Stop when cluster DNS no longer matches the form
+      when: >-
+        (dns_servers_live | sort) != (dns_server_list | sort)
+        or dns_domains_live != [dns_domain_requested]
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete cluster DNS
+      netapp.ontap.na_ontap_dns:
+        state: absent
+
+    - name: Report the deleted DNS configuration
+      ansible.builtin.debug:
+        msg: "Deleted cluster DNS servers {{ dns_servers_live | join(', ') }}."

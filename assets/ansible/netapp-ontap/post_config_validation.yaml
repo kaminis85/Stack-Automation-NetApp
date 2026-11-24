@@ -1,10 +1,91 @@
 ---
+# Creating the interface group makes ONTAP add domains such as Default-1 in
+# the Default IPspace, with the interface group as a member. The earlier
+# cleanup leaves those in place when they contain a port. This play deletes
+# a Default-* domain only when it is in the Default IPspace and one of its
+# ports is the interface group. The domain named Default is left in place.
 - name: Post Config Validation Tasks
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ifgrp_name_normalized: "{{ ifgrp_name | default('') | string | trim | lower }}"
 
   tasks:
+
+    - name: Get broadcast domains in the Default IPspace
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+        use_python_keys: true
+        gather_subset:
+          - network/ethernet/broadcast-domains
+        parameters:
+          ipspace.name: Default
+        fields:
+          - name
+          - ipspace
+          - ports
+      register: default_domain_info
+      when: ifgrp_name_normalized | length > 0
+
+    - name: Select Default broadcast domains that contain the interface group
+      ansible.builtin.set_fact:
+        ifgrp_default_domains: "{{ ifgrp_default_domains | default([]) + [item.name] }}"
+      vars:
+        port_names: >-
+          {{
+            item.ports | default([])
+            | map(attribute='name')
+            | map('lower')
+            | list
+          }}
+      when:
+        - ifgrp_name_normalized | length > 0
+        - (item.ipspace | default({})).name | default('') == 'Default'
+        - item.name is match('^Default-')
+        - ifgrp_name_normalized in port_names
+      loop: >-
+        {{
+          (
+            (default_domain_info.ontap_info | default({})).network_ethernet_broadcast_domains
+            | default({})
+          ).records | default([])
+        }}
+      loop_control:
+        label: "{{ item.name | default('unnamed domain') }}"
+
+    - name: Note when no Default broadcast domain for the interface group needs to be deleted
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'No interface group name was provided, so no Default broadcast domain was deleted.'
+            if ifgrp_name_normalized | length == 0
+            else
+            'No Default-* broadcast domain in the Default IPspace contains interface group '
+            ~ ifgrp_name_normalized
+            ~ ', so nothing was deleted.'
+          }}
+      when: ifgrp_default_domains | default([]) | length == 0
+
+    - name: Delete Default broadcast domains that contain the interface group
+      netapp.ontap.na_ontap_broadcast_domain:
+        state: absent
+        name: "{{ item }}"
+        ipspace: Default
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+        use_rest: always
+      loop: "{{ ifgrp_default_domains | default([]) | unique }}"
+      loop_control:
+        label: "{{ item }}"
 
     - name: Get System Health status
       netapp.ontap.na_ontap_rest_cli:

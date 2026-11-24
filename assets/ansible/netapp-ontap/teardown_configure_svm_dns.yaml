@@ -1,0 +1,109 @@
+---
+# Undo of configure_svm_dns.yaml: remove DNS from the SVM.
+# The default route is deleted after this, because configure_svm_dns depends
+# on configure_svm_default_route. Safe to run twice.
+- name: Delete SVM DNS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_dns:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that the SVM name is blank
+      ansible.builtin.debug:
+        msg: The SVM name is blank, so SVM DNS was not deleted.
+      when: svm_name_normalized | length == 0
+
+    - name: Stop when the SVM name is blank
+      when: svm_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: >-
+          SVM {{ svm_name_normalized }} is already gone, so its DNS configuration
+          is already gone.
+      when: not (svm_is_present | bool)
+
+    - name: Stop when the SVM is already gone
+      when: not (svm_is_present | bool)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete DNS on the SVM
+      netapp.ontap.na_ontap_dns:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+      register: dns_delete
+      failed_when: false
+
+    - name: Confirm SVM DNS was deleted
+      ansible.builtin.assert:
+        that:
+          - not (dns_delete.failed | default(false))
+        fail_msg: >-
+          Deleting DNS on SVM {{ svm_name_normalized }} failed:
+          {{ dns_delete.msg | default('') }}
+        success_msg: "SVM {{ svm_name_normalized }} DNS delete accepted"

@@ -1,0 +1,194 @@
+---
+# Undo of configure_svm_audit_log.yaml: disable SVM auditing, then delete the
+# audit log volume. This runs before the SVM delete and before the aggregate
+# delete. Load-sharing SnapMirror is not ordered against this grain, so its
+# mirror set may still exist when this runs. Safe to run twice.
+- name: Delete the SVM audit log
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_vserver_audit:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_volume:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    audit_log_volume_name_normalized: "{{ audit_log_volume_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that the SVM name is blank
+      ansible.builtin.debug:
+        msg: The SVM name is blank, so the audit log was not deleted.
+      when: svm_name_normalized | length == 0
+
+    - name: Stop when the SVM name is blank
+      when: svm_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Validate the audit log volume name
+      ansible.builtin.assert:
+        that:
+          - audit_log_volume_name_normalized is match('^[A-Za-z_][A-Za-z0-9_]{0,202}$')
+        fail_msg: >-
+          Audit log volume name must start with a letter or underscore and
+          contain only letters, numbers, and underscores.
+      when: audit_log_volume_name_normalized | length > 0
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: >-
+          SVM {{ svm_name_normalized }} is already gone, so its audit
+          configuration and audit log volume are already gone.
+      when: not (svm_is_present | bool)
+
+    - name: Stop when the SVM is already gone
+      when: not (svm_is_present | bool)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete SVM auditing
+      netapp.ontap.na_ontap_vserver_audit:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+      register: audit_delete
+      failed_when: false
+
+    - name: Confirm SVM auditing was deleted
+      ansible.builtin.assert:
+        that:
+          - not (audit_delete.failed | default(false))
+        fail_msg: >-
+          Deleting auditing on SVM {{ svm_name_normalized }} failed:
+          {{ audit_delete.msg | default('') }}
+        success_msg: "SVM {{ svm_name_normalized }} auditing delete accepted"
+
+    - name: Note that no audit log volume name was provided
+      ansible.builtin.debug:
+        msg: The audit log volume name is blank, so no volume was deleted.
+      when: audit_log_volume_name_normalized | length == 0
+
+    - name: Stop when no audit log volume name was provided
+      when: audit_log_volume_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete the audit log volume
+      netapp.ontap.na_ontap_volume:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+        name: "{{ audit_log_volume_name_normalized }}"
+        time_out: 300
+      register: volume_delete
+      failed_when: false
+
+    - name: Confirm the audit log volume was deleted
+      ansible.builtin.assert:
+        that:
+          - not (volume_delete.failed | default(false))
+        fail_msg: >-
+          Deleting volume {{ audit_log_volume_name_normalized }} failed:
+          {{ volume_delete.msg | default('') }}
+        success_msg: "Volume {{ audit_log_volume_name_normalized }} delete accepted"
+
+    - name: Wait until the audit log volume is gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - storage/volumes
+        parameters:
+          name: "{{ audit_log_volume_name_normalized }}"
+          svm.name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: volume_check
+      failed_when: false
+      until: >-
+        not (volume_check.failed | default(false)) and (
+          ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+          | default([])
+          | selectattr('name', 'equalto', audit_log_volume_name_normalized)
+          | list
+          | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the audit log volume is gone
+      ansible.builtin.assert:
+        that:
+          - not (volume_check.failed | default(false))
+          - (
+              ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', audit_log_volume_name_normalized)
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          Volume {{ audit_log_volume_name_normalized }} is still present after
+          the delete. {{ volume_check.msg | default('') }}
+        success_msg: "Volume {{ audit_log_volume_name_normalized }} is gone"

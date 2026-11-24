@@ -1,0 +1,238 @@
+---
+# Undo of configure_ifgrp.yaml: delete the data interface group on each node
+# that lists data ports. VLAN interfaces are already gone, because that grain
+# depends on this one. Member ports are removed first, then the interface
+# group is deleted. Safe to run twice.
+- name: Delete ONTAP data interface groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_rest_cli:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    ifgrp_name_normalized: "{{ ifgrp_name | default('') | string | trim | lower }}"
+    node_rows: >-
+      {{
+        [] if (node_specs | default('[]') | string | trim) in ['', '[]']
+        else (node_specs | from_json if node_specs is string else node_specs)
+      }}
+
+  tasks:
+
+    - name: Note that no interface group name was provided
+      ansible.builtin.debug:
+        msg: No interface group name was provided, so no interface group was deleted.
+      when: ifgrp_name_normalized | length == 0
+
+    - name: Stop when the interface group name is empty
+      when: ifgrp_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the interface group name
+      ansible.builtin.assert:
+        that:
+          - ifgrp_name_normalized is match('^a(0|[1-9][0-9]{0,2})[a-z]$')
+        fail_msg: >-
+          Interface group name must look like a0a: the letter a, a number from
+          0 to 999 with no leading zeros, and one lowercase letter.
+
+    - name: Normalize node rows
+      ansible.builtin.set_fact:
+        node_plan: "{{ node_plan | default([]) + [normalized_row] }}"
+      vars:
+        ports_raw: "{{ item.ports | default(item['Data Ports'], true) | default('', true) }}"
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) | trim }}"
+          ports: >-
+            {{
+              (
+                ports_raw
+                if ports_raw is not string
+                else ports_raw.split(',') | map('trim') | reject('equalto', '') | list
+              ) | unique | list
+            }}
+      loop: "{{ node_rows }}"
+      loop_control:
+        label: "{{ item.node_name | default(item['Node Name'], true) | default('unnamed row', true) }}"
+
+    - name: Select nodes that list data ports
+      ansible.builtin.set_fact:
+        port_plan: "{{ port_plan | default([]) + [item] }}"
+      loop: "{{ node_plan | default([]) }}"
+      when: item.ports | length > 0 and item.node_name | length > 0
+      loop_control:
+        label: "{{ item.node_name }}"
+
+    - name: Note that no data ports were provided
+      ansible.builtin.debug:
+        msg: No data ports were provided, so no interface group was deleted.
+      when: port_plan | default([]) | length == 0
+
+    - name: Stop when no interface group is needed
+      when: port_plan | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Get Ethernet ports
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ethernet/ports
+        fields:
+          - name
+          - node
+          - type
+      register: port_info
+      failed_when: false
+
+    - name: Confirm the port lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (port_info.failed | default(false))
+        fail_msg: >-
+          Could not read Ethernet ports: {{ port_info.msg | default('') }}
+
+    - name: Record interface groups that already use this name
+      ansible.builtin.set_fact:
+        existing_ifgrp_nodes: "{{ existing_ifgrp_nodes | default([]) + [node_name] }}"
+      vars:
+        node_name: "{{ (item.node | default({})).name | default('') }}"
+      when:
+        - item.type | default('') == 'lag'
+        - item.name == ifgrp_name_normalized
+        - node_name in (port_plan | map(attribute='node_name') | list)
+      loop: "{{ (port_info.ontap_info.network_ethernet_ports | default({})).records | default([]) }}"
+      loop_control:
+        label: "{{ (item.node | default({})).name | default('unknown node') }}/{{ item.name | default('unnamed port') }}"
+
+    - name: Note that the interface group is already gone
+      ansible.builtin.debug:
+        msg: >-
+          Interface group {{ ifgrp_name_normalized }} is already gone on
+          {{ port_plan | map(attribute='node_name') | join(', ') }}.
+      when: existing_ifgrp_nodes | default([]) | length == 0
+
+    - name: Remove data ports from the interface group
+      netapp.ontap.na_ontap_rest_cli:
+        command: network/port/ifgrp/remove-port
+        verb: POST
+        body:
+          node: "{{ item.0.node_name }}"
+          ifgrp: "{{ ifgrp_name_normalized }}"
+          port: "{{ item.1 }}"
+      loop: "{{ port_plan | subelements('ports') }}"
+      when:
+        - existing_ifgrp_nodes | default([]) | length > 0
+        - item.0.node_name in (existing_ifgrp_nodes | default([]))
+      loop_control:
+        label: "{{ item.0.node_name }}/{{ ifgrp_name_normalized }}/{{ item.1 }}"
+      register: port_remove
+      failed_when: false
+
+    - name: Confirm data ports were removed from the interface group
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false)) or port_already_absent
+        fail_msg: >-
+          Removing {{ item.item.1 }} from interface group {{ ifgrp_name_normalized }}
+          on {{ item.item.0.node_name }} failed: {{ item.msg | default('') }}
+        success_msg: >-
+          Port {{ item.item.1 }} is no longer in interface group
+          {{ ifgrp_name_normalized }} on {{ item.item.0.node_name }}
+      vars:
+        message: "{{ item.msg | default('') | string | lower }}"
+        port_already_absent: >-
+          {{
+            'not a member' in message
+            or 'not found' in message
+            or 'does not exist' in message
+            or "doesn't exist" in message
+          }}
+      loop: "{{ port_remove.results | default([]) }}"
+      when: existing_ifgrp_nodes | default([]) | length > 0
+      loop_control:
+        label: "{{ item.item.0.node_name }}/{{ item.item.1 }}"
+
+    - name: Delete the interface group on each node
+      netapp.ontap.na_ontap_rest_cli:
+        command: network/port/ifgrp
+        verb: DELETE
+        params:
+          node: "{{ item }}"
+          ifgrp: "{{ ifgrp_name_normalized }}"
+      loop: "{{ existing_ifgrp_nodes | default([]) | unique }}"
+      when: existing_ifgrp_nodes | default([]) | length > 0
+      loop_control:
+        label: "{{ item }}/{{ ifgrp_name_normalized }}"
+      register: ifgrp_delete
+      failed_when: false
+
+    - name: Confirm the interface groups were deleted
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false))
+        fail_msg: >-
+          Deleting interface group {{ ifgrp_name_normalized }} on {{ item.item }}
+          failed: {{ item.msg | default('') }}
+        success_msg: >-
+          Interface group {{ ifgrp_name_normalized }} on {{ item.item }} delete accepted
+      loop: "{{ ifgrp_delete.results | default([]) }}"
+      when: existing_ifgrp_nodes | default([]) | length > 0
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Wait until the interface groups are gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ethernet/ports
+        fields:
+          - name
+          - node
+          - type
+      register: ifgrp_check
+      failed_when: false
+      until: >-
+        not (ifgrp_check.failed | default(false)) and (
+          (
+            ((ifgrp_check.ontap_info | default({})).network_ethernet_ports | default({})).records
+            | default([])
+            | selectattr('name', 'equalto', ifgrp_name_normalized)
+            | map(attribute='node.name')
+            | list
+          ) | intersect(port_plan | map(attribute='node_name') | list) | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the interface groups are gone
+      ansible.builtin.assert:
+        that:
+          - not (ifgrp_check.failed | default(false))
+          - (
+              (
+                ((ifgrp_check.ontap_info | default({})).network_ethernet_ports | default({})).records
+                | default([])
+                | selectattr('name', 'equalto', ifgrp_name_normalized)
+                | map(attribute='node.name')
+                | list
+              ) | intersect(port_plan | map(attribute='node_name') | list) | length
+            ) == 0
+        fail_msg: >-
+          Interface group {{ ifgrp_name_normalized }} is still present after the delete.
+          {{ ifgrp_check.msg | default('') }}
+        success_msg: "Interface group {{ ifgrp_name_normalized }} is gone"

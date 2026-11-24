@@ -1,0 +1,481 @@
+---
+# Undo of configure_svm_load_sharing_snapmirror.yaml.
+# Deletes the load-sharing SnapMirror relationships, the mirror volumes named
+# <root>_lsm0<hex>, and the job schedule. Built-in schedules (5min, 8hour,
+# hourly, daily, weekly, monthly, and pg-*) are left in place.
+# This runs before the SVM and the aggregates are deleted.
+# The job schedule is deleted only when no SnapMirror relationship still uses
+# it. Safe to run twice.
+- name: Delete the SVM root load-sharing SnapMirror
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_volume:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_job_schedule:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_rest_cli:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    job_name_normalized: "{{ job_name | default('') | string | trim }}"
+    builtin_schedules:
+      - 5min
+      - 8hour
+      - hourly
+      - daily
+      - weekly
+      - monthly
+
+  tasks:
+
+    - name: Note that the SVM name is blank
+      ansible.builtin.debug:
+        msg: The SVM name is blank, so no load-sharing SnapMirror was deleted.
+      when: svm_name_normalized | length == 0
+
+    - name: Stop when the SVM name is blank
+      when: svm_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Delete load-sharing mirrors while the SVM exists
+      when: svm_is_present | bool
+      block:
+
+        - name: Get the SVM root volume
+          netapp.ontap.na_ontap_rest_info:
+            gather_subset:
+              - storage/volumes
+            parameters:
+              name: "*root"
+              svm.name: "{{ svm_name_normalized }}"
+            fields:
+              - name
+              - is_svm_root
+          register: root_volume_info
+
+        - name: Select the SVM root volume
+          ansible.builtin.set_fact:
+            root_volume_name: "{{ (chosen_root_records | first | default({})).name | default('') }}"
+          vars:
+            volume_records: >-
+              {{
+                (root_volume_info.ontap_info.storage_volumes | default({})).records
+                | default([])
+              }}
+            flagged_root_records: >-
+              {{
+                volume_records
+                | selectattr('is_svm_root', 'defined')
+                | selectattr('is_svm_root')
+                | list
+              }}
+            named_root_records: >-
+              {{
+                volume_records
+                | selectattr('name', 'equalto', svm_name_normalized ~ '_root')
+                | list
+              }}
+            chosen_root_records: "{{ flagged_root_records if flagged_root_records | length > 0 else named_root_records }}"
+
+        - name: Validate that the SVM root volume was found
+          ansible.builtin.assert:
+            that:
+              - root_volume_name | default('') | length > 0
+            fail_msg: >-
+              Expected the SVM root volume on {{ svm_name_normalized }} before
+              deleting load-sharing mirrors.
+
+        - name: Read load-sharing mirror volumes
+          netapp.ontap.na_ontap_rest_info:
+            gather_subset:
+              - storage/volumes
+            parameters:
+              name: "{{ root_volume_name }}_lsm0*"
+              svm.name: "{{ svm_name_normalized }}"
+            fields:
+              - name
+          register: lsm_volume_info
+
+        - name: Read SnapMirror relationships for the SVM root volume
+          netapp.ontap.na_ontap_rest_cli:
+            command: snapmirror
+            verb: GET
+            params:
+              source-path: "{{ svm_name_normalized }}:{{ root_volume_name }}"
+              fields: destination-path,type
+          register: lsm_snapmirror_info
+
+        - name: Record mirror volumes this task created
+          ansible.builtin.set_fact:
+            mirror_volume_names: "{{ volume_names | unique | list }}"
+            mirror_relationships: []
+          vars:
+            volume_name_pattern: "^{{ root_volume_name | regex_escape }}_lsm0[0-9a-f]+$"
+            volume_names: >-
+              {{
+                (lsm_volume_info.ontap_info.storage_volumes | default({})).records
+                | default([])
+                | map(attribute='name')
+                | select('match', volume_name_pattern)
+                | list
+              }}
+
+        - name: Keep load-sharing relationships for the mirror volumes
+          ansible.builtin.set_fact:
+            mirror_relationships: "{{ mirror_relationships | default([]) + [row] }}"
+          vars:
+            destination_path: "{{ item['destination-path'] | default(item.destination_path | default('')) }}"
+            volume_name: "{{ destination_path | regex_replace('^.*[:/]', '') }}"
+            volume_name_pattern: "^{{ root_volume_name | regex_escape }}_lsm0[0-9a-f]+$"
+            row:
+              destination_path: "{{ destination_path }}"
+              volume_name: "{{ volume_name }}"
+          loop: "{{ (lsm_snapmirror_info.msg | default({})).records | default([]) }}"
+          when:
+            - destination_path | length > 0
+            - volume_name is match(volume_name_pattern)
+          loop_control:
+            label: "{{ item['destination-path'] | default(item.destination_path | default('unknown destination')) }}"
+
+        - name: Add relationship destinations to the mirror volume list
+          ansible.builtin.set_fact:
+            mirror_volume_names: >-
+              {{
+                (
+                  (mirror_volume_names | default([]))
+                  + (mirror_relationships | default([]) | map(attribute='volume_name') | list)
+                ) | unique | list
+              }}
+
+        - name: Show the load-sharing delete plan
+          ansible.builtin.debug:
+            msg: >-
+              Source {{ svm_name_normalized }}:{{ root_volume_name }}.
+              Relationships:
+              {{ mirror_relationships | default([]) | map(attribute='destination_path') | join(', ') if (mirror_relationships | default([]) | length > 0) else 'none' }}.
+              Volumes:
+              {{ mirror_volume_names | default([]) | join(', ') if (mirror_volume_names | default([]) | length > 0) else 'none' }}.
+
+        - name: Quiesce the load-sharing SnapMirror relationships
+          netapp.ontap.na_ontap_rest_cli:
+            command: snapmirror/quiesce
+            verb: POST
+            body:
+              destination-path: "{{ item.destination_path }}"
+          loop: "{{ mirror_relationships | default([]) }}"
+          when: mirror_relationships | default([]) | length > 0
+          loop_control:
+            label: "{{ item.destination_path }}"
+          failed_when: false
+
+        - name: Delete the load-sharing SnapMirror relationships
+          netapp.ontap.na_ontap_rest_cli:
+            command: snapmirror
+            verb: DELETE
+            params:
+              destination-path: "{{ item.destination_path }}"
+          loop: "{{ mirror_relationships | default([]) }}"
+          when: mirror_relationships | default([]) | length > 0
+          loop_control:
+            label: "{{ item.destination_path }}"
+          register: snapmirror_delete
+          failed_when: false
+
+        - name: Confirm the SnapMirror relationships were deleted
+          ansible.builtin.assert:
+            that:
+              - not (item.failed | default(false))
+            fail_msg: >-
+              Deleting SnapMirror {{ item.item.destination_path }} failed:
+              {{ item.msg | default('') }}
+            success_msg: "SnapMirror {{ item.item.destination_path }} delete accepted"
+          loop: "{{ snapmirror_delete.results | default([]) }}"
+          when: mirror_relationships | default([]) | length > 0
+          loop_control:
+            label: "{{ item.item.destination_path }}"
+
+        - name: Release the load-sharing SnapMirror relationships
+          netapp.ontap.na_ontap_rest_cli:
+            command: snapmirror/release
+            verb: POST
+            body:
+              source-path: "{{ svm_name_normalized }}:{{ root_volume_name }}"
+              destination-path: "{{ item.destination_path }}"
+          loop: "{{ mirror_relationships | default([]) }}"
+          when: mirror_relationships | default([]) | length > 0
+          loop_control:
+            label: "{{ item.destination_path }}"
+          failed_when: false
+
+        - name: Delete the load-sharing mirror volumes
+          netapp.ontap.na_ontap_volume:
+            state: absent
+            vserver: "{{ svm_name_normalized }}"
+            name: "{{ item }}"
+            time_out: 300
+          loop: "{{ mirror_volume_names | default([]) }}"
+          when: mirror_volume_names | default([]) | length > 0
+          loop_control:
+            label: "{{ item }}"
+          register: volume_delete
+          failed_when: false
+
+        - name: Wait before retrying mirror volumes that are still busy
+          ansible.builtin.pause:
+            seconds: 20
+          when: >-
+            volume_delete.results | default([]) | selectattr('failed') | list | length > 0
+
+        - name: Retry mirror volumes that were still busy
+          netapp.ontap.na_ontap_volume:
+            state: absent
+            vserver: "{{ svm_name_normalized }}"
+            name: "{{ item.item }}"
+            time_out: 300
+          loop: "{{ volume_delete.results | default([]) | selectattr('failed') | list }}"
+          when: volume_delete.results | default([]) | selectattr('failed') | list | length > 0
+          loop_control:
+            label: "{{ item.item }}"
+          register: volume_delete_retry
+          failed_when: false
+
+        - name: Confirm the mirror volumes were deleted
+          ansible.builtin.assert:
+            that:
+              - not (item.failed | default(false))
+            fail_msg: >-
+              Deleting a load-sharing mirror volume failed:
+              {{ item.msg | default('') }}
+          loop: >-
+            {{
+              volume_delete_retry.results
+              | default(volume_delete.results | default([]))
+            }}
+          when: mirror_volume_names | default([]) | length > 0
+          loop_control:
+            label: "{{ item.item.item | default(item.item) }}"
+
+        - name: Wait until the mirror volumes are gone
+          netapp.ontap.na_ontap_rest_info:
+            gather_subset:
+              - storage/volumes
+            parameters:
+              name: "{{ root_volume_name }}_lsm0*"
+              svm.name: "{{ svm_name_normalized }}"
+            fields:
+              - name
+          register: volume_check
+          failed_when: false
+          until: >-
+            not (volume_check.failed | default(false)) and (
+              ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+              | default([])
+              | map(attribute='name')
+              | select('match', '^' ~ (root_volume_name | regex_escape) ~ '_lsm0[0-9a-f]+$')
+              | list
+              | length
+            ) == 0
+          retries: 20
+          delay: 10
+          when: mirror_volume_names | default([]) | length > 0
+
+        - name: Confirm the mirror volumes are gone
+          ansible.builtin.assert:
+            that:
+              - not (volume_check.failed | default(false))
+              - (
+                  ((volume_check.ontap_info | default({})).storage_volumes | default({})).records
+                  | default([])
+                  | map(attribute='name')
+                  | select('match', '^' ~ (root_volume_name | regex_escape) ~ '_lsm0[0-9a-f]+$')
+                  | list
+                  | length
+                ) == 0
+            fail_msg: >-
+              A load-sharing mirror volume is still present after the delete.
+              {{ volume_check.msg | default('') }}
+            success_msg: "Load-sharing mirror volumes are gone"
+          when: mirror_volume_names | default([]) | length > 0
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: >-
+          SVM {{ svm_name_normalized }} is already gone, so its load-sharing
+          mirrors are already gone. The job schedule is still removed when
+          this deployment created it.
+      when: not (svm_is_present | bool)
+
+    - name: Note that no job schedule was requested
+      ansible.builtin.debug:
+        msg: The job name is blank, so no schedule was deleted.
+      when: job_name_normalized | length == 0
+
+    - name: Note that a built-in schedule was left in place
+      ansible.builtin.debug:
+        msg: >-
+          Job schedule {{ job_name_normalized }} is a built-in ONTAP schedule
+          and was not deleted.
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized in builtin_schedules or job_name_normalized is match('^pg-')
+
+    - name: Read SnapMirror relationships before deleting the schedule
+      netapp.ontap.na_ontap_rest_cli:
+        command: snapmirror
+        verb: GET
+        params:
+          fields: destination-path,schedule
+      register: schedule_users
+      failed_when: false
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+
+    - name: Confirm the SnapMirror schedule lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (schedule_users.failed | default(false))
+        fail_msg: >-
+          Could not read SnapMirror relationships before deleting job schedule
+          {{ job_name_normalized }}: {{ schedule_users.msg | default('') }}
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+
+    - name: Collect schedules that a SnapMirror relationship still uses
+      ansible.builtin.set_fact:
+        schedule_names_in_use: "{{ schedule_names_in_use | default([]) + [schedule_name] }}"
+      vars:
+        raw_schedule: "{{ item.schedule | default(item['transfer-schedule'] | default('')) }}"
+        schedule_name: >-
+          {{
+            (raw_schedule.name | default(raw_schedule | string))
+            if raw_schedule is mapping
+            else (raw_schedule | string)
+          }}
+      loop: "{{ (schedule_users.msg | default({})).records | default([]) }}"
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+        - schedule_name | trim | length > 0
+      loop_control:
+        label: "{{ schedule_name | default('no schedule') }}"
+
+    - name: Record whether another relationship still uses the schedule
+      ansible.builtin.set_fact:
+        schedule_still_used: "{{ job_name_normalized in (schedule_names_in_use | default([])) }}"
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+
+    - name: Note that the job schedule is still used
+      ansible.builtin.debug:
+        msg: >-
+          Job schedule {{ job_name_normalized }} is still used by a SnapMirror
+          relationship, so it was not deleted.
+      when:
+        - job_name_normalized | length > 0
+        - schedule_still_used | default(false) | bool
+
+    - name: Delete the job schedule
+      netapp.ontap.na_ontap_job_schedule:
+        state: absent
+        name: "{{ job_name_normalized }}"
+      register: schedule_delete
+      failed_when: false
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+        - not (schedule_still_used | default(false) | bool)
+
+    - name: Confirm the job schedule was deleted
+      ansible.builtin.assert:
+        that:
+          - not (schedule_delete.failed | default(false))
+        fail_msg: >-
+          Deleting job schedule {{ job_name_normalized }} failed:
+          {{ schedule_delete.msg | default('') }}
+        success_msg: "Job schedule {{ job_name_normalized }} delete accepted"
+      when:
+        - job_name_normalized | length > 0
+        - job_name_normalized is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$')
+        - job_name_normalized not in builtin_schedules
+        - not (job_name_normalized is match('^pg-'))
+        - not (schedule_still_used | default(false) | bool)

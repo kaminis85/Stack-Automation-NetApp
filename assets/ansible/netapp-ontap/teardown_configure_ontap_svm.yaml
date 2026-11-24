@@ -1,0 +1,171 @@
+---
+# Undo of configure_ontap_svm.yaml: delete the data SVM.
+# LIFs, the export-policy rule, the audit log volume, and load-sharing
+# SnapMirror volumes are already gone, because those grains depend on this
+# one. Deleting the SVM also deletes its root volume. The IPspace and the
+# data aggregates are deleted after this. The SVM must be the data SVM in
+# the deployment IPspace. Safe to run twice.
+- name: Delete the ONTAP SVM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_svm:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    ipspace_name_normalized: "{{ ipspace_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that the SVM name is blank
+      ansible.builtin.debug:
+        msg: The SVM name is blank, so no SVM was deleted.
+      when: svm_name_normalized | length == 0
+
+    - name: Stop when the SVM name is blank
+      when: svm_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Validate the IPspace name
+      ansible.builtin.assert:
+        that:
+          - ipspace_name_normalized | length > 0
+          - ipspace_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,63}$')
+          - ipspace_name_normalized | lower not in ['default', 'cluster']
+        fail_msg: >-
+          SVM deletion uses the IPspace name from Network Configuration. Enter
+          a name that starts with a letter or underscore. Default and Cluster
+          already exist and cannot be used here.
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+          - subtype
+          - ipspace
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Select the SVM record
+      ansible.builtin.set_fact:
+        svm_record: >-
+          {{
+            ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+            | default([])
+            | selectattr('name', 'equalto', svm_name_normalized)
+            | list
+            | first
+            | default({})
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: SVM {{ svm_name_normalized }} is already gone.
+      when: svm_record.name | default('') | length == 0
+
+    - name: Stop when the SVM is already gone
+      when: svm_record.name | default('') | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Refuse to delete an SVM that is not the data SVM in this IPspace
+      ansible.builtin.assert:
+        that:
+          - (svm_record.ipspace | default({})).name | default('') == ipspace_name_normalized
+          - svm_record.subtype | default('default') == 'default'
+        fail_msg: >-
+          SVM {{ svm_name_normalized }} is subtype
+          {{ svm_record.subtype | default('unknown') }} in IPspace
+          {{ (svm_record.ipspace | default({})).name | default('unknown') }}.
+          Only the data SVM in IPspace {{ ipspace_name_normalized }} is deleted.
+
+    - name: Delete the SVM
+      netapp.ontap.na_ontap_svm:
+        state: absent
+        name: "{{ svm_name_normalized }}"
+      register: svm_delete
+      failed_when: false
+
+    - name: Confirm the SVM was deleted
+      ansible.builtin.assert:
+        that:
+          - not (svm_delete.failed | default(false))
+        fail_msg: >-
+          Deleting SVM {{ svm_name_normalized }} failed:
+          {{ svm_delete.msg | default('') }}
+        success_msg: "SVM {{ svm_name_normalized }} delete accepted"
+
+    - name: Wait until the SVM is gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_check
+      failed_when: false
+      until: >-
+        not (svm_check.failed | default(false)) and (
+          ((svm_check.ontap_info | default({})).svm_svms | default({})).records
+          | default([])
+          | selectattr('name', 'equalto', svm_name_normalized)
+          | list
+          | length
+        ) == 0
+      retries: 30
+      delay: 10
+
+    - name: Confirm the SVM is gone
+      ansible.builtin.assert:
+        that:
+          - not (svm_check.failed | default(false))
+          - (
+              ((svm_check.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          SVM {{ svm_name_normalized }} is still present after the delete.
+          {{ svm_check.msg | default('') }}
+        success_msg: "SVM {{ svm_name_normalized }} is gone"

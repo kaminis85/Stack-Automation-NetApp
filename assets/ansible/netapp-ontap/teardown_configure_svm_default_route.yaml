@@ -1,0 +1,120 @@
+---
+# Undo of configure_svm_default_route.yaml: delete the SVM default route.
+# SVM DNS is already gone, because that grain depends on this one. The
+# management LIF is deleted after this, because this grain depends on it.
+# Safe to run twice.
+- name: Delete the SVM default route
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_net_routes:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    svm_name_normalized: "{{ svm_name | default('') | string | trim }}"
+    svm_mgmt_lif_gateway_normalized: "{{ svm_mgmt_lif_gateway | default('') | string | trim }}"
+    ipv4_pattern: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+
+  tasks:
+
+    - name: Note that the route was not requested
+      ansible.builtin.debug:
+        msg: The SVM name or gateway is blank, so the default route was not deleted.
+      when: svm_name_normalized | length == 0 or svm_mgmt_lif_gateway_normalized | length == 0
+
+    - name: Stop when the route was not requested
+      when: svm_name_normalized | length == 0 or svm_mgmt_lif_gateway_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate the SVM name
+      ansible.builtin.assert:
+        that:
+          - svm_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,40}$')
+        fail_msg: >-
+          SVM name must start with a letter or underscore, contain only
+          letters, numbers, underscores, hyphens, and periods, and be at most
+          41 characters.
+
+    - name: Validate svm_mgmt_lif_gateway
+      ansible.builtin.assert:
+        that:
+          - svm_mgmt_lif_gateway_normalized is match(ipv4_pattern)
+        fail_msg: svm_mgmt_lif_gateway must be an IPv4 address.
+
+    - name: Read the SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        parameters:
+          name: "{{ svm_name_normalized }}"
+        fields:
+          - name
+      register: svm_lookup
+      failed_when: false
+
+    - name: Confirm the SVM lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - not (svm_lookup.failed | default(false))
+        fail_msg: >-
+          Could not read SVM {{ svm_name_normalized }}:
+          {{ svm_lookup.msg | default('') }}
+
+    - name: Record whether the SVM is present
+      ansible.builtin.set_fact:
+        svm_is_present: >-
+          {{
+            (
+              ((svm_lookup.ontap_info | default({})).svm_svms | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', svm_name_normalized)
+              | list
+              | length
+            ) > 0
+          }}
+
+    - name: Note that the SVM is already gone
+      ansible.builtin.debug:
+        msg: >-
+          SVM {{ svm_name_normalized }} is already gone, so its default route
+          is already gone.
+      when: not (svm_is_present | bool)
+
+    - name: Stop when the SVM is already gone
+      when: not (svm_is_present | bool)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Delete the default route on the SVM
+      netapp.ontap.na_ontap_net_routes:
+        state: absent
+        vserver: "{{ svm_name_normalized }}"
+        destination: 0.0.0.0/0
+        gateway: "{{ svm_mgmt_lif_gateway_normalized }}"
+      register: route_delete
+      failed_when: false
+
+    - name: Confirm the default route was deleted
+      ansible.builtin.assert:
+        that:
+          - not (route_delete.failed | default(false))
+        fail_msg: >-
+          Deleting the default route on SVM {{ svm_name_normalized }} failed:
+          {{ route_delete.msg | default('') }}
+        success_msg: "SVM {{ svm_name_normalized }} default route delete accepted"

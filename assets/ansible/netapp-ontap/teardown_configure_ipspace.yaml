@@ -1,0 +1,95 @@
+---
+# Undo of configure_ipspace.yaml: delete the IPspace.
+# End runs on-destroy in reverse dependency order. SVM DNS, the default route,
+# LIFs, the export-policy rule, the audit log, load-sharing SnapMirror, the SVM,
+# VLAN interfaces, and broadcast domains are already gone, because those grains
+# depend on configure_ipspace or on a grain that does. ONTAP removes the empty
+# Default broadcast domain with the IPspace. Safe to run twice.
+- name: Delete the ONTAP IPspace
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_ipspace:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    ipspace_name_normalized: "{{ ipspace_name | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Validate the IPspace name
+      ansible.builtin.assert:
+        that:
+          - ipspace_name_normalized | length > 0
+          - ipspace_name_normalized is match('^[A-Za-z_][A-Za-z0-9_.-]{0,63}$')
+          - ipspace_name_normalized | lower not in ['default', 'cluster']
+        fail_msg: >-
+          IPspace name must start with a letter or underscore and contain only
+          letters, numbers, underscores, hyphens, and periods. Default and
+          Cluster already exist and cannot be deleted here.
+
+    - name: Delete the IPspace
+      netapp.ontap.na_ontap_ipspace:
+        state: absent
+        name: "{{ ipspace_name_normalized }}"
+      register: ipspace_delete
+      failed_when: false
+
+    - name: Confirm the IPspace was deleted (or already was)
+      ansible.builtin.assert:
+        that:
+          - not (ipspace_delete.failed | default(false))
+        fail_msg: >-
+          Deleting IPspace {{ ipspace_name_normalized }} failed:
+          {{ ipspace_delete.msg | default('') }}
+        success_msg: "IPspace {{ ipspace_name_normalized }} delete accepted"
+
+    - name: Wait until the IPspace is gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ipspaces
+        parameters:
+          name: "{{ ipspace_name_normalized }}"
+        fields:
+          - name
+      register: ipspace_check
+      failed_when: false
+      until: >-
+        not (ipspace_check.failed | default(false)) and (
+          ((ipspace_check.ontap_info | default({})).network_ipspaces | default({})).records
+          | default([])
+          | selectattr('name', 'equalto', ipspace_name_normalized)
+          | list
+          | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the IPspace is gone
+      ansible.builtin.assert:
+        that:
+          - not (ipspace_check.failed | default(false))
+          - (
+              ((ipspace_check.ontap_info | default({})).network_ipspaces | default({})).records
+              | default([])
+              | selectattr('name', 'equalto', ipspace_name_normalized)
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          IPspace {{ ipspace_name_normalized }} is still present after the delete.
+          {{ ipspace_check.msg | default('') }}
+        success_msg: "IPspace {{ ipspace_name_normalized }} is gone"

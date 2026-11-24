@@ -1,0 +1,150 @@
+---
+# Undo of configure_snmp.yaml: remove the SNMP community, SNMPv3 user, and
+# traphost named on the form, clear the contact and location when those
+# fields were set, set the SNMP init value back to 0, and disable SNMP.
+# Safe to run twice.
+- name: Remove ONTAP SNMP settings named on the form
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_snmp:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_snmp_traphosts:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+    netapp.ontap.na_ontap_snmp_config:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+    netapp.ontap.na_ontap_rest_cli:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+  vars:
+    fips_on: "{{ (is_fips_enabled | default('') | string | trim | lower) == 'true' }}"
+    contact_requested: "{{ snmp_contact | default('') | string | trim }}"
+    location_requested: "{{ snmp_location | default('') | string | trim }}"
+    traphost_requested: "{{ traphost_ip | default('') | string | trim }}"
+    community_requested: "{{ snmp_community | default('') | string | trim }}"
+    user_requested: "{{ snmp_v3_user | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that no SNMP value was named
+      ansible.builtin.debug:
+        msg: No SNMP contact, location, user, community, or traphost was named, so End leaves SNMP unchanged.
+      when: >-
+        contact_requested | length == 0
+        and location_requested | length == 0
+        and user_requested | length == 0
+        and (fips_on | bool or traphost_requested | length == 0)
+        and (fips_on | bool or community_requested | length == 0)
+
+    - name: Stop when no SNMP value was named
+      when: >-
+        contact_requested | length == 0
+        and location_requested | length == 0
+        and user_requested | length == 0
+        and (fips_on | bool or traphost_requested | length == 0)
+        and (fips_on | bool or community_requested | length == 0)
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Remove the SNMP traphost
+      netapp.ontap.na_ontap_snmp_traphosts:
+        state: absent
+        host: "{{ traphost_requested }}"
+      when:
+        - not (fips_on | bool)
+        - traphost_requested | length > 0
+      register: traphost_delete
+      failed_when: false
+
+    - name: Confirm the SNMP traphost was removed
+      ansible.builtin.assert:
+        that:
+          - not (traphost_delete.failed | default(false)) or (traphost_delete.msg | default('') | lower is search('not found|does not exist|not exist'))
+        fail_msg: "Removing SNMP traphost {{ traphost_requested }} failed: {{ traphost_delete.msg | default('') }}"
+      when:
+        - not (fips_on | bool)
+        - traphost_requested | length > 0
+
+    - name: Remove the SNMP community
+      netapp.ontap.na_ontap_snmp:
+        state: absent
+        snmp_username: "{{ community_requested }}"
+      when:
+        - not (fips_on | bool)
+        - community_requested | length > 0
+      register: community_delete
+      failed_when: false
+
+    - name: Confirm the SNMP community was removed
+      ansible.builtin.assert:
+        that:
+          - not (community_delete.failed | default(false)) or (community_delete.msg | default('') | lower is search('not found|does not exist|not exist'))
+        fail_msg: "Removing SNMP community {{ community_requested }} failed: {{ community_delete.msg | default('') }}"
+      when:
+        - not (fips_on | bool)
+        - community_requested | length > 0
+
+    - name: Remove the SNMPv3 user
+      netapp.ontap.na_ontap_snmp:
+        state: absent
+        snmp_username: "{{ user_requested }}"
+      when: user_requested | length > 0
+      register: user_delete
+      failed_when: false
+
+    - name: Confirm the SNMPv3 user was removed
+      ansible.builtin.assert:
+        that:
+          - not (user_delete.failed | default(false)) or (user_delete.msg | default('') | lower is search('not found|does not exist|not exist'))
+        fail_msg: "Removing SNMPv3 user {{ user_requested }} failed: {{ user_delete.msg | default('') }}"
+      when: user_requested | length > 0
+
+    - name: Clear the SNMP contact
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/contact
+        verb: PATCH
+        body:
+          contact: ""
+      when: contact_requested | length > 0
+
+    - name: Clear the SNMP location
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/location
+        verb: PATCH
+        body:
+          location: ""
+      when: location_requested | length > 0
+
+    - name: Set the SNMP init value to 0
+      netapp.ontap.na_ontap_rest_cli:
+        command: system/snmp/init
+        verb: PATCH
+        body:
+          init: "0"
+
+    - name: Disable SNMP
+      netapp.ontap.na_ontap_snmp_config:
+        state: present
+        enabled: false
+
+    - name: Report the SNMP cleanup
+      ansible.builtin.debug:
+        msg: Removed the SNMP users, traphost, contact, and location named on the form, set the SNMP init value to 0, and disabled SNMP.

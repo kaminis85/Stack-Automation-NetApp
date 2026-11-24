@@ -1,0 +1,195 @@
+---
+# Undo of configure_vlan_interfaces.yaml: delete the VLAN interfaces.
+# LIFs are already gone, because those grains depend on this one. Broadcast
+# domains and interface groups are deleted after this. Safe to run twice.
+- name: Delete ONTAP VLAN interfaces
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_net_vlan:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+  vars:
+    ifgrp_name_normalized: "{{ ifgrp_name | default('') | string | trim | lower }}"
+    node_rows: >-
+      {{
+        [] if (node_specs | default('[]') | string | trim) in ['', '[]']
+        else (node_specs | from_json if node_specs is string else node_specs)
+      }}
+    network_inputs:
+      - role: In-band management
+        name: "{{ ib_mgmt_vlan_name | default('') | string | trim }}"
+        id: "{{ ib_mgmt_vlan_id | default('') | string | trim }}"
+      - role: NFS
+        name: "{{ nfs_vlan_name | default('') | string | trim }}"
+        id: "{{ nfs_vlan_id | default('') | string | trim }}"
+      - role: iSCSI-A
+        name: "{{ iscsi_a_vlan_name | default('') | string | trim }}"
+        id: "{{ iscsi_a_vlan_id | default('') | string | trim }}"
+      - role: iSCSI-B
+        name: "{{ iscsi_b_vlan_name | default('') | string | trim }}"
+        id: "{{ iscsi_b_vlan_id | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Select networks that have both a VLAN name and a VLAN ID
+      ansible.builtin.set_fact:
+        vlan_plan: "{{ network_inputs | selectattr('name') | selectattr('id') | list }}"
+
+    - name: Note that no VLAN was requested
+      ansible.builtin.debug:
+        msg: No VLAN has both a name and an ID, so no VLAN interface was deleted.
+      when: vlan_plan | length == 0 or ifgrp_name_normalized | length == 0
+
+    - name: Stop when no VLAN was requested
+      when: vlan_plan | length == 0 or ifgrp_name_normalized | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Normalize node rows
+      ansible.builtin.set_fact:
+        node_plan: "{{ node_plan | default([]) + [normalized_row] }}"
+      vars:
+        ports_raw: "{{ item.ports | default(item['Data Ports'], true) | default('', true) }}"
+        normalized_row:
+          node_name: "{{ item.node_name | default(item['Node Name'], true) | default('', true) | trim }}"
+          ports: >-
+            {{
+              (
+                ports_raw
+                if ports_raw is not string
+                else ports_raw.split(',') | map('trim') | reject('equalto', '') | list
+              ) | unique | list
+            }}
+      loop: "{{ node_rows }}"
+      loop_control:
+        label: "{{ item.node_name | default(item['Node Name'], true) | default('unnamed row', true) }}"
+
+    - name: Select nodes that list data ports
+      ansible.builtin.set_fact:
+        port_plan: "{{ port_plan | default([]) + [item] }}"
+      loop: "{{ node_plan | default([]) }}"
+      when: item.ports | length > 0 and item.node_name | length > 0
+      loop_control:
+        label: "{{ item.node_name }}"
+
+    - name: Note that no node lists data ports
+      ansible.builtin.debug:
+        msg: No node lists data ports, so no VLAN interface was deleted.
+      when: port_plan | default([]) | length == 0
+
+    - name: Stop when no node lists data ports
+      when: port_plan | default([]) | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Validate VLAN IDs
+      ansible.builtin.assert:
+        that:
+          - item.id is match('^[1-9][0-9]{0,3}$')
+          - item.id | int <= 4094
+        fail_msg: "{{ item.role }} VLAN ID must be a number from 1 to 4094."
+      loop: "{{ vlan_plan }}"
+      loop_control:
+        label: "{{ item.role }}"
+
+    - name: Validate the interface group name
+      ansible.builtin.assert:
+        that:
+          - ifgrp_name_normalized is match('^a(0|[1-9][0-9]{0,2})[a-z]$')
+        fail_msg: >-
+          Interface group name must look like a0a: the letter a, a number from
+          0 to 999 with no leading zeros, and one lowercase letter.
+
+    - name: Record the VLAN interfaces to delete
+      ansible.builtin.set_fact:
+        vlan_ports: "{{ vlan_ports | default([]) + [row] }}"
+      vars:
+        row:
+          node_name: "{{ item.0.node_name }}"
+          vlan_id: "{{ item.1.id | int }}"
+          port_name: "{{ ifgrp_name_normalized }}-{{ item.1.id }}"
+          port_key: "{{ item.0.node_name }}/{{ ifgrp_name_normalized }}-{{ item.1.id }}"
+      loop: "{{ port_plan | product(vlan_plan) | list }}"
+      loop_control:
+        label: "{{ item.0.node_name }}/{{ ifgrp_name_normalized }}-{{ item.1.id }}"
+
+    - name: Delete the VLAN interfaces
+      netapp.ontap.na_ontap_net_vlan:
+        state: absent
+        node: "{{ item.node_name }}"
+        parent_interface: "{{ ifgrp_name_normalized }}"
+        vlanid: "{{ item.vlan_id }}"
+      loop: "{{ vlan_ports }}"
+      loop_control:
+        label: "{{ item.port_key }}"
+      register: vlan_delete
+      failed_when: false
+
+    - name: Confirm the VLAN interfaces were deleted
+      ansible.builtin.assert:
+        that:
+          - not (item.failed | default(false))
+        fail_msg: >-
+          Deleting VLAN interface {{ item.item.port_key }} failed:
+          {{ item.msg | default('') }}
+        success_msg: "VLAN interface {{ item.item.port_key }} delete accepted"
+      loop: "{{ vlan_delete.results }}"
+      loop_control:
+        label: "{{ item.item.port_key }}"
+
+    - name: Wait until the VLAN interfaces are gone
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - network/ethernet/ports
+        parameters:
+          type: vlan
+        fields:
+          - name
+          - node
+          - type
+      register: vlan_check
+      failed_when: false
+      until: >-
+        not (vlan_check.failed | default(false)) and (
+          (
+            ((vlan_check.ontap_info | default({})).network_ethernet_ports | default({})).records
+            | default([])
+            | map(attribute='name')
+            | list
+          ) | intersect(vlan_ports | map(attribute='port_name') | list) | length
+        ) == 0
+      retries: 20
+      delay: 10
+
+    - name: Confirm the VLAN interfaces are gone
+      ansible.builtin.assert:
+        that:
+          - not (vlan_check.failed | default(false))
+          - (
+              (
+                ((vlan_check.ontap_info | default({})).network_ethernet_ports | default({})).records
+                | default([])
+                | map(attribute='name')
+                | list
+              ) | intersect(vlan_ports | map(attribute='port_name') | list) | length
+            ) == 0
+        fail_msg: >-
+          A VLAN interface is still present after the delete.
+          {{ vlan_check.msg | default('') }}
+        success_msg: "VLAN interfaces are gone"

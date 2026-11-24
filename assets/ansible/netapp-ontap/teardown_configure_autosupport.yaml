@@ -1,0 +1,174 @@
+---
+# Undo of configure_autosupport.yaml: put AutoSupport back to the ONTAP day-0
+# defaults when the mail hosts, from address, and to addresses still match the
+# form. Day-0 is mail host "mailhost", from "Postmaster", and no to addresses.
+# AutoSupport stays enabled. A proxy URL from the form is cleared. Safe to run
+# twice.
+- name: Restore ONTAP AutoSupport day-0 defaults
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    netapp.ontap.na_ontap_rest_info:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+      use_python_keys: true
+    netapp.ontap.na_ontap_autosupport:
+      hostname: "{{ ontap_hostname }}"
+      username: "{{ ontap_username }}"
+      password: "{{ ontap_password }}"
+      https: true
+      validate_certs: false
+      use_rest: always
+  vars:
+    mail_host_list: "{{ (autosupport_mail_hosts | default('') | string).split(',') | map('trim') | reject('equalto', '') | list }}"
+    to_address_list: "{{ (autosupport_to_addresses | default('') | string).split(',') | map('trim') | reject('equalto', '') | list }}"
+    from_requested: "{{ autosupport_from_address | default('') | string | trim }}"
+
+  tasks:
+
+    - name: Note that AutoSupport was not named on the form
+      ansible.builtin.debug:
+        msg: AutoSupport mail settings were not named, so End leaves AutoSupport unchanged.
+      when: mail_host_list | length == 0 or to_address_list | length == 0 or from_requested | length == 0
+
+    - name: Stop when AutoSupport was not named on the form
+      when: mail_host_list | length == 0 or to_address_list | length == 0 or from_requested | length == 0
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    - name: Discover ONTAP cluster nodes
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - cluster/nodes
+        fields:
+          - name
+      register: node_info
+
+    - name: Read AutoSupport
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - support/autosupport
+        # Configuration is cluster-scoped. "node" is not a valid field and
+        # ONTAP rejects the query with error 262197.
+        fields:
+          - mail_hosts
+          - from
+          - to
+      register: autosupport_info
+
+    # ONTAP returns one cluster object, either directly or as records[0].
+    # It also appends the default SMTP port to each mail host (:25, or :587
+    # when SMTP encryption is start_tls). The form does not include that port.
+    - name: Record nodes and the cluster AutoSupport settings
+      ansible.builtin.set_fact:
+        node_list: "{{ node_list }}"
+        live_mail_hosts: "{{ live_mail_hosts }}"
+        live_to_addresses: "{{ live_to_addresses }}"
+        live_from_address: "{{ live_from_address }}"
+        form_mail_hosts: "{{ form_mail_hosts }}"
+        form_to_addresses: "{{ form_to_addresses }}"
+        form_from_address: "{{ form_from_address }}"
+      vars:
+        node_list: >-
+          {{
+            node_info.ontap_info.cluster_nodes.records
+            | default([])
+            | map(attribute='name')
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | list
+          }}
+        autosupport_response: "{{ autosupport_info.ontap_info.support_autosupport | default({}) }}"
+        autosupport_record: >-
+          {{
+            (autosupport_response.records | first)
+            if (
+              autosupport_response.records is defined
+              and autosupport_response.records | length > 0
+            )
+            else autosupport_response
+          }}
+        mail_raw: "{{ autosupport_record.mail_hosts | default(autosupport_record['mail-hosts'] | default([], true), true) }}"
+        to_raw: "{{ autosupport_record.to | default([], true) }}"
+        live_mail_hosts: >-
+          {{
+            (mail_raw.split(',') if mail_raw is string else mail_raw)
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | map('regex_replace', ':(25|587)$', '')
+            | map('lower')
+            | sort
+            | list
+          }}
+        live_to_addresses: >-
+          {{
+            (to_raw.split(',') if to_raw is string else to_raw)
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | map('lower')
+            | sort
+            | list
+          }}
+        live_from_address: "{{ autosupport_record['from'] | default('', true) | string | trim | lower }}"
+        form_mail_hosts: "{{ mail_host_list | map('regex_replace', ':(25|587)$', '') | map('lower') | sort | list }}"
+        form_to_addresses: "{{ to_address_list | map('lower') | sort | list }}"
+        form_from_address: "{{ from_requested | lower }}"
+
+    - name: Validate discovered nodes
+      ansible.builtin.assert:
+        that:
+          - node_list | length > 0
+        fail_msg: The cluster did not return any node names.
+
+    - name: Note that AutoSupport no longer matches the form
+      ansible.builtin.debug:
+        msg: >-
+          AutoSupport no longer matches the form, so End leaves it unchanged.
+          Live mail hosts {{ live_mail_hosts | join(', ') }},
+          from {{ live_from_address }},
+          to {{ live_to_addresses | join(', ') }}.
+          Form mail hosts {{ form_mail_hosts | join(', ') }},
+          from {{ form_from_address }},
+          to {{ form_to_addresses | join(', ') }}.
+      when: >-
+        live_mail_hosts != form_mail_hosts
+        or live_to_addresses != form_to_addresses
+        or live_from_address != form_from_address
+
+    - name: Stop when AutoSupport no longer matches the form
+      when: >-
+        live_mail_hosts != form_mail_hosts
+        or live_to_addresses != form_to_addresses
+        or live_from_address != form_from_address
+      block:
+        - name: Stop the play
+          ansible.builtin.meta: end_play
+
+    # na_ontap_autosupport requires node_name, but ONTAP applies AutoSupport
+    # changes to the whole cluster. The loop writes the same settings once per
+    # node; the module skips nodes that already match.
+    - name: Restore AutoSupport day-0 defaults
+      netapp.ontap.na_ontap_autosupport:
+        state: present
+        node_name: "{{ item }}"
+        mail_hosts:
+          - mailhost
+        from_address: Postmaster
+        to_addresses: []
+        proxy_url: "{{ '' if (autosupport_proxy_url | default('') | string | trim | length > 0) else omit }}"
+      loop: "{{ node_list }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Report the nodes
+      ansible.builtin.debug:
+        msg: "Restored AutoSupport to the ONTAP day-0 defaults (mail host mailhost, from Postmaster, and no to addresses) on {{ node_list | join(', ') }}. AutoSupport stays enabled."

@@ -666,6 +666,19 @@ grains:
         - ontap_password: '{{ .inputs.ontap_password }}'
         - cluster_name: '{{ .inputs.cluster_name }}'
         - cluster_location: '{{ .inputs.cluster_location }}'
+      # Runs when the deployment is ended. Clears the cluster location when it still matches the form.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_update_cluster_location.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - cluster_name: '{{ .inputs.cluster_name }}'
+          - cluster_location: '{{ .inputs.cluster_location }}'
 
   ensure_cluster_mgmt_auto_revert:
     kind: ansible
@@ -710,6 +723,18 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - node_specs: '{{ .inputs.node_specs }}'
+      # Runs when the deployment is ended. Sets a service-processor interface that still has the address from the form back to DHCP.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_sp_network.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
 
   discover_disk_class:
     kind: ansible
@@ -747,6 +772,18 @@ grains:
         - disk_class: '{{ .grains.discover_disk_class.outputs.disk_class }}'
       outputs:
         - aggregate_status
+      # Runs when the deployment is ended, after the SVM and its volumes are gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_create_data_aggregates.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
 
   zero_spare_disks:
     kind: ansible
@@ -836,6 +873,19 @@ grains:
         - ontap_password: '{{ .inputs.ontap_password }}'
         - dns_servers: '{{ .inputs.dns_servers }}'
         - dns_domain_name: '{{ .inputs.dns_domain_name }}'
+      # Runs when the deployment is ended. Removes cluster DNS when it still matches the form.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_dns.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - dns_servers: '{{ .inputs.dns_servers }}'
+          - dns_domain_name: '{{ .inputs.dns_domain_name }}'
 
   configure_ntp:
     kind: ansible
@@ -852,6 +902,18 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - ntp_servers: '{{ .inputs.ntp_servers }}'
+      # Runs when the deployment is ended. Deletes the NTP servers named on the form.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_ntp.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - ntp_servers: '{{ .inputs.ntp_servers }}'
 
   enable_storage_failover:
     kind: ansible
@@ -884,7 +946,6 @@ grains:
         - cluster_name: '{{ .inputs.cluster_name }}'
         - time_zone: '{{ .inputs.time_zone }}'
 
-
   configure_autosupport:
     kind: ansible
     when: '{% if .inputs.autosupport_mail_hosts != "" and .inputs.autosupport_from_address != "" and .inputs.autosupport_to_addresses != "" %}true{% else %}false{% endif %}'
@@ -903,6 +964,23 @@ grains:
         - autosupport_from_address: '{{ .inputs.autosupport_from_address }}'
         - autosupport_to_addresses: '{{ .inputs.autosupport_to_addresses }}'
         - autosupport_proxy_url: '{{ .inputs.autosupport_proxy_url }}'
+      # Runs when the deployment is ended. Restores ONTAP day-0 AutoSupport defaults
+      # (mail host mailhost, from Postmaster, empty to list) when those fields still match the form.
+      # AutoSupport stays enabled. A proxy URL from the form is cleared.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_autosupport.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - autosupport_mail_hosts: '{{ .inputs.autosupport_mail_hosts }}'
+          - autosupport_from_address: '{{ .inputs.autosupport_from_address }}'
+          - autosupport_to_addresses: '{{ .inputs.autosupport_to_addresses }}'
+          - autosupport_proxy_url: '{{ .inputs.autosupport_proxy_url }}'
 
   add_licenses:
     kind: ansible
@@ -935,6 +1013,20 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
+      # Runs when the deployment is ended and the form set FIPS to true.
+      # Sets SSL FIPS mode back to false when the cluster still has it enabled.
+      on-destroy:
+        when: '{% if .inputs.is_fips_enabled == "true" %}true{% else %}false{% endif %}'
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_fips.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
 
   configure_snmp:
     kind: ansible
@@ -962,6 +1054,29 @@ grains:
         - snmp_priv_protocol: '{{ .inputs.snmp_priv_protocol }}'
         - snmp_priv_protocol_fips: '{{ .inputs.snmp_priv_protocol_fips }}'
         - snmp_priv_password: '{{ .inputs.snmp_priv_password }}'
+      # Runs when the deployment is ended. Removes the SNMP users, traphost, contact, and location named on the form, sets the SNMP init value to 0, and disables SNMP.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_snmp.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - is_fips_enabled: '{{ .inputs.is_fips_enabled }}'
+          - snmp_contact: '{{ .inputs.snmp_contact }}'
+          - snmp_location: '{{ .inputs.snmp_location }}'
+          - traphost_ip: '{{ .inputs.traphost_ip }}'
+          - snmp_community: '{{ .inputs.snmp_community }}'
+          - snmp_v3_user: '{{ .inputs.snmp_v3_user }}'
+          - snmp_auth_protocol: '{{ .inputs.snmp_auth_protocol }}'
+          - snmp_auth_protocol_fips: '{{ .inputs.snmp_auth_protocol_fips }}'
+          - snmp_auth_password: '{{ .inputs.snmp_auth_password }}'
+          - snmp_priv_protocol: '{{ .inputs.snmp_priv_protocol }}'
+          - snmp_priv_protocol_fips: '{{ .inputs.snmp_priv_protocol_fips }}'
+          - snmp_priv_password: '{{ .inputs.snmp_priv_password }}'
 
   create_login_banner:
     kind: ansible
@@ -978,6 +1093,18 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - cluster_login_banner: '{{ .inputs.cluster_login_banner }}'
+      # Runs when the deployment is ended. Clears the cluster login banner when it still matches the form.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_create_login_banner.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - cluster_login_banner: '{{ .inputs.cluster_login_banner }}'
 
   disable_http_cluster_management:
     kind: ansible
@@ -1012,6 +1139,20 @@ grains:
         - node_specs: '{{ .inputs.node_specs }}'
         - ifgrp_name: '{{ .inputs.ifgrp_name }}'
         - ifgrp_mode: '{{ .inputs.ifgrp_mode }}'
+      # Runs when the deployment is ended, after the VLAN interfaces are gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_ifgrp.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ifgrp_name: '{{ .inputs.ifgrp_name }}'
+          - ifgrp_mode: '{{ .inputs.ifgrp_mode }}'
 
   configure_ipspace:
     kind: ansible
@@ -1028,6 +1169,18 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - ipspace_name: '{{ .inputs.ipspace_name }}'
+      # Runs when the deployment is ended: deletes this IPspace.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_ipspace.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - ipspace_name: '{{ .inputs.ipspace_name }}'
 
   configure_broadcast_domains:
     kind: ansible
@@ -1048,6 +1201,22 @@ grains:
         - nfs_vlan_name: '{{ .inputs.nfs_vlan_name }}'
         - iscsi_a_vlan_name: '{{ .inputs.iscsi_a_vlan_name }}'
         - iscsi_b_vlan_name: '{{ .inputs.iscsi_b_vlan_name }}'
+      # Runs when the deployment is ended, after the VLAN interfaces are gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_broadcast_domains.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - ipspace_name: '{{ .inputs.ipspace_name }}'
+          - ib_mgmt_vlan_name: '{{ .inputs.ib_mgmt_vlan_name }}'
+          - nfs_vlan_name: '{{ .inputs.nfs_vlan_name }}'
+          - iscsi_a_vlan_name: '{{ .inputs.iscsi_a_vlan_name }}'
+          - iscsi_b_vlan_name: '{{ .inputs.iscsi_b_vlan_name }}'
 
   configure_vlan_interfaces:
     kind: ansible
@@ -1074,6 +1243,28 @@ grains:
         - iscsi_a_vlan_id: '{{ .inputs.iscsi_a_vlan_id }}'
         - iscsi_b_vlan_name: '{{ .inputs.iscsi_b_vlan_name }}'
         - iscsi_b_vlan_id: '{{ .inputs.iscsi_b_vlan_id }}'
+      # Runs when the deployment is ended, after the LIFs are gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_vlan_interfaces.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ifgrp_name: '{{ .inputs.ifgrp_name }}'
+          - ipspace_name: '{{ .inputs.ipspace_name }}'
+          - ib_mgmt_vlan_name: '{{ .inputs.ib_mgmt_vlan_name }}'
+          - ib_mgmt_vlan_id: '{{ .inputs.ib_mgmt_vlan_id }}'
+          - nfs_vlan_name: '{{ .inputs.nfs_vlan_name }}'
+          - nfs_vlan_id: '{{ .inputs.nfs_vlan_id }}'
+          - iscsi_a_vlan_name: '{{ .inputs.iscsi_a_vlan_name }}'
+          - iscsi_a_vlan_id: '{{ .inputs.iscsi_a_vlan_id }}'
+          - iscsi_b_vlan_name: '{{ .inputs.iscsi_b_vlan_name }}'
+          - iscsi_b_vlan_id: '{{ .inputs.iscsi_b_vlan_id }}'
 
   configure_ontap_svm:
     kind: ansible
@@ -1093,6 +1284,21 @@ grains:
         - ipspace_name: '{{ .inputs.ipspace_name }}'
         - svm_name: '{{ .inputs.svm_name }}'
         - allowed_protocols: '{{ .inputs.allowed_protocols }}'
+      # Runs when the deployment is ended, after LIFs, volumes, and SnapMirror are gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_ontap_svm.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ipspace_name: '{{ .inputs.ipspace_name }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - allowed_protocols: '{{ .inputs.allowed_protocols }}'
 
   configure_svm_load_sharing_snapmirror:
     kind: ansible
@@ -1112,6 +1318,21 @@ grains:
         - svm_name: '{{ .inputs.svm_name }}'
         - job_name: '{{ .inputs.job_name }}'
         - job_minutes: '{{ .inputs.job_minutes }}'
+      # Runs when the deployment is ended, before the SVM and the aggregates are deleted.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_load_sharing_snapmirror.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - job_name: '{{ .inputs.job_name }}'
+          - job_minutes: '{{ .inputs.job_minutes }}'
 
   configure_svm_vsadmin:
     kind: ansible
@@ -1146,6 +1367,20 @@ grains:
         - ontap_password: '{{ .inputs.ontap_password }}'
         - svm_name: '{{ .inputs.svm_name }}'
         - svm_login_banner: '{{ .inputs.svm_login_banner }}'
+      # Runs when the deployment is ended, before the SVM is deleted.
+      # Clears the SVM login banner when it still matches the form.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_login_banner.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - svm_login_banner: '{{ .inputs.svm_login_banner }}'
 
   configure_svm_mgmt_lif:
     kind: ansible
@@ -1169,6 +1404,25 @@ grains:
         - svm_mgmt_lif_name: '{{ .inputs.svm_mgmt_lif_name }}'
         - svm_mgmt_lif_address: '{{ .inputs.svm_mgmt_lif_address }}'
         - svm_mgmt_lif_netmask: '{{ .inputs.svm_mgmt_lif_netmask }}'
+      # Runs when the deployment is ended, after the default route is gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_mgmt_lif.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ifgrp_name: '{{ .inputs.ifgrp_name }}'
+          - ib_mgmt_vlan_name: '{{ .inputs.ib_mgmt_vlan_name }}'
+          - ib_mgmt_vlan_id: '{{ .inputs.ib_mgmt_vlan_id }}'
+          - svm_mgmt_lif_name: '{{ .inputs.svm_mgmt_lif_name }}'
+          - svm_mgmt_lif_address: '{{ .inputs.svm_mgmt_lif_address }}'
+          - svm_mgmt_lif_netmask: '{{ .inputs.svm_mgmt_lif_netmask }}'
 
   configure_svm_default_route:
     kind: ansible
@@ -1187,6 +1441,20 @@ grains:
         - svm_name: '{{ .inputs.svm_name }}'
         - svm_mgmt_lif_address: '{{ .inputs.svm_mgmt_lif_address }}'
         - svm_mgmt_lif_gateway: '{{ .inputs.svm_mgmt_lif_gateway }}'
+      # Runs when the deployment is ended, after SVM DNS is gone.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_default_route.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - svm_mgmt_lif_address: '{{ .inputs.svm_mgmt_lif_address }}'
+          - svm_mgmt_lif_gateway: '{{ .inputs.svm_mgmt_lif_gateway }}'
 
   configure_svm_dns:
     kind: ansible
@@ -1205,6 +1473,20 @@ grains:
         - svm_name: '{{ .inputs.svm_name }}'
         - svm_dns_servers: '{{ .inputs.svm_dns_servers }}'
         - svm_dns_domain: '{{ .inputs.svm_dns_domain }}'
+      # Runs when the deployment is ended, before the default route is deleted.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_dns.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - svm_dns_servers: '{{ .inputs.svm_dns_servers }}'
+          - svm_dns_domain: '{{ .inputs.svm_dns_domain }}'
 
   configure_nfs_export_policy:
     kind: ansible
@@ -1223,6 +1505,20 @@ grains:
         - svm_name: '{{ .inputs.svm_name }}'
         - allowed_protocols: '{{ .inputs.allowed_protocols }}'
         - nfs_client_match: '{{ .inputs.nfs_client_match }}'
+      # Runs when the deployment is ended, before the SVM is deleted.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_nfs_export_policy.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - allowed_protocols: '{{ .inputs.allowed_protocols }}'
+          - nfs_client_match: '{{ .inputs.nfs_client_match }}'
 
   configure_svm_audit_log:
     kind: ansible
@@ -1243,7 +1539,23 @@ grains:
         - audit_log_volume_name: '{{ .inputs.audit_log_volume_name }}'
         - audit_log_volume_size_gb: '{{ .inputs.audit_log_volume_size_gb }}'
         - audit_log_aggregate: '{{ .inputs.audit_log_aggregate }}'
-   
+      # Runs when the deployment is ended, before the SVM and the aggregates are deleted. Not ordered against load-sharing SnapMirror.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_svm_audit_log.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - audit_log_volume_name: '{{ .inputs.audit_log_volume_name }}'
+          - audit_log_volume_size_gb: '{{ .inputs.audit_log_volume_size_gb }}'
+          - audit_log_aggregate: '{{ .inputs.audit_log_aggregate }}'
+
   configure_nfs_lif:
     kind: ansible
     when: '{% if .inputs.svm_name != ""  and .inputs.ifgrp_name != ""  and .inputs.node_specs != "" and .inputs.node_specs != "[]"  and .inputs.nfs_vlan_id != "" %}true{% else %}false{% endif %}'
@@ -1263,6 +1575,22 @@ grains:
         - ifgrp_name: '{{ .inputs.ifgrp_name }}'
         - nfs_vlan_id: '{{ .inputs.nfs_vlan_id }}'
         - allowed_protocols: '{{ .inputs.allowed_protocols }}'
+      # Runs when the deployment is ended, before the SVM and the VLAN interfaces are deleted.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_nfs_lif.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ifgrp_name: '{{ .inputs.ifgrp_name }}'
+          - nfs_vlan_id: '{{ .inputs.nfs_vlan_id }}'
+          - allowed_protocols: '{{ .inputs.allowed_protocols }}'
 
   configure_iscsi_lif:
     kind: ansible
@@ -1284,11 +1612,28 @@ grains:
         - iscsi_a_vlan_id: '{{ .inputs.iscsi_a_vlan_id }}'
         - iscsi_b_vlan_id: '{{ .inputs.iscsi_b_vlan_id }}'
         - allowed_protocols: '{{ .inputs.allowed_protocols }}'
-      
+      # Runs when the deployment is ended, before the SVM and the VLAN interfaces are deleted.
+      on-destroy:
+        source:
+          store: Stack-Automation-NetApp
+          path: assets/ansible/netapp-ontap/teardown_configure_iscsi_lif.yaml
+        agent:
+          name: '{{ .inputs.agent }}'
+        inputs:
+          - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+          - ontap_username: '{{ .inputs.ontap_username }}'
+          - ontap_password: '{{ .inputs.ontap_password }}'
+          - svm_name: '{{ .inputs.svm_name }}'
+          - node_specs: '{{ .inputs.node_specs }}'
+          - ifgrp_name: '{{ .inputs.ifgrp_name }}'
+          - iscsi_a_vlan_id: '{{ .inputs.iscsi_a_vlan_id }}'
+          - iscsi_b_vlan_id: '{{ .inputs.iscsi_b_vlan_id }}'
+          - allowed_protocols: '{{ .inputs.allowed_protocols }}'
+
   post_config_validation:
     kind: ansible
     when: '{% if .inputs.ontap_hostname != "" and .inputs.ontap_username != "" and .inputs.ontap_password != "" and .inputs.autosupport_message != "" %}true{% else %}false{% endif %}'
-    depends-on: pre_validation, update_cluster_location, ensure_cluster_mgmt_auto_revert, configure_sp_network, zero_spare_disks, ensure_cluster_ha, disable_flow_control, enable_cdp, enable_lldp, configure_dns, configure_ntp, enable_storage_failover, set_timezone, configure_autosupport, configure_fips, configure_snmp, create_login_banner, disable_http_cluster_management, configure_svm_load_sharing_snapmirror, configure_svm_vsadmin, configure_svm_login_banner, configure_svm_dns, configure_nfs_export_policy, configure_svm_audit_log, configure_nfs_lif, configure_iscsi_lif
+    depends-on: pre_validation, update_cluster_location, ensure_cluster_mgmt_auto_revert, configure_sp_network, zero_spare_disks, ensure_cluster_ha, disable_flow_control, enable_cdp, enable_lldp, configure_dns, configure_ntp, enable_storage_failover, set_timezone, configure_autosupport, configure_fips, configure_snmp, create_login_banner, disable_http_cluster_management, configure_ifgrp, configure_vlan_interfaces, configure_svm_load_sharing_snapmirror, configure_svm_vsadmin, configure_svm_login_banner, configure_svm_dns, configure_nfs_export_policy, configure_svm_audit_log, configure_nfs_lif, configure_iscsi_lif
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -1300,3 +1645,4 @@ grains:
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
         - autosupport_message: '{{ .inputs.autosupport_message }}'
+        - ifgrp_name: '{{ .inputs.ifgrp_name }}'

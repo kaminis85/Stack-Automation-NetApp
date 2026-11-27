@@ -23,120 +23,123 @@ customization:
   grains-map:
     initial-map-view: custom
     nodes:
-      pre_validation:
+      create_ontap_cluster:
         type: grain
         position: {x: 80, y: 80}
-      update_cluster_location:
+      pre_validation:
         type: grain
         position: {x: 360, y: 80}
-      ensure_cluster_mgmt_auto_revert:
+      update_cluster_location:
         type: grain
         position: {x: 640, y: 80}
-      delete_default_broadcast_domains:
+      ensure_cluster_mgmt_auto_revert:
         type: grain
         position: {x: 920, y: 80}
-      configure_sp_network:
+      delete_default_broadcast_domains:
         type: grain
         position: {x: 1200, y: 80}
-      discover_disk_class:
+      configure_sp_network:
         type: grain
         position: {x: 80, y: 320}
-      create_data_aggregates:
+      discover_disk_class:
         type: grain
         position: {x: 360, y: 320}
-      zero_spare_disks:
+      create_data_aggregates:
         type: grain
         position: {x: 640, y: 320}
-      ensure_cluster_ha:
+      zero_spare_disks:
         type: grain
         position: {x: 920, y: 320}
-      disable_flow_control:
+      ensure_cluster_ha:
         type: grain
         position: {x: 1200, y: 320}
-      enable_cdp:
+      disable_flow_control:
         type: grain
         position: {x: 80, y: 560}
-      enable_lldp:
+      enable_cdp:
         type: grain
         position: {x: 360, y: 560}
-      configure_dns:
+      enable_lldp:
         type: grain
         position: {x: 640, y: 560}
-      configure_ntp:
+      configure_dns:
         type: grain
         position: {x: 920, y: 560}
-      enable_storage_failover:
+      configure_ntp:
         type: grain
         position: {x: 1200, y: 560}
-      set_timezone:
+      enable_storage_failover:
         type: grain
         position: {x: 80, y: 800}
-      configure_autosupport:
+      set_timezone:
         type: grain
         position: {x: 360, y: 800}
-      add_licenses:
+      configure_autosupport:
         type: grain
         position: {x: 640, y: 800}
-      configure_fips:
+      add_licenses:
         type: grain
         position: {x: 920, y: 800}
-      configure_snmp:
+      configure_fips:
         type: grain
         position: {x: 1200, y: 800}
-      create_login_banner:
+      configure_snmp:
         type: grain
         position: {x: 80, y: 1040}
-      disable_http_cluster_management:
+      create_login_banner:
         type: grain
         position: {x: 360, y: 1040}
-      configure_ifgrp:
+      disable_http_cluster_management:
         type: grain
         position: {x: 640, y: 1040}
-      configure_ipspace:
+      configure_ifgrp:
         type: grain
         position: {x: 920, y: 1040}
-      configure_broadcast_domains:
+      configure_ipspace:
         type: grain
         position: {x: 1200, y: 1040}
-      configure_vlan_interfaces:
+      configure_broadcast_domains:
         type: grain
         position: {x: 80, y: 1280}
-      configure_ontap_svm:
+      configure_vlan_interfaces:
         type: grain
         position: {x: 360, y: 1280}
-      configure_svm_load_sharing_snapmirror:
+      configure_ontap_svm:
         type: grain
         position: {x: 640, y: 1280}
-      configure_svm_vsadmin:
+      configure_svm_load_sharing_snapmirror:
         type: grain
         position: {x: 920, y: 1280}
-      configure_svm_login_banner:
+      configure_svm_vsadmin:
         type: grain
         position: {x: 1200, y: 1280}
-      configure_svm_mgmt_lif:
+      configure_svm_login_banner:
         type: grain
         position: {x: 80, y: 1520}
-      configure_svm_default_route:
+      configure_svm_mgmt_lif:
         type: grain
         position: {x: 360, y: 1520}
-      configure_svm_dns:
+      configure_svm_default_route:
         type: grain
         position: {x: 640, y: 1520}
-      configure_nfs_export_policy:
+      configure_svm_dns:
         type: grain
         position: {x: 920, y: 1520}
-      configure_svm_audit_log:
+      configure_nfs_export_policy:
         type: grain
         position: {x: 1200, y: 1520}
-      configure_nfs_lif:
+      configure_svm_audit_log:
         type: grain
         position: {x: 80, y: 1760}
-      configure_iscsi_lif:
+      configure_nfs_lif:
         type: grain
         position: {x: 360, y: 1760}
-      post_config_validation:
+      configure_iscsi_lif:
         type: grain
         position: {x: 640, y: 1760}
+      post_config_validation:
+        type: grain
+        position: {x: 920, y: 1760}
   launch-form:
     categories:
       - name: ONTAP Storage Setup
@@ -152,14 +155,16 @@ customization:
               - name: ontap_username
               - name: ontap_password
               - name: cluster_name
+              - name: cluster_mgmt_netmask
+              - name: cluster_mgmt_gateway
               - name: cluster_location
               - name: time_zone
               - name: cluster_login_banner
-          - name: Node configuration. One row per node and one aggregate. Fill in NFS/iSCSI LIF details based on the protocol.Skip if not needed. To skip these tasks, delete every row. A blank row keeps Finish disabled.
+          - name: Node configuration. One row per node and one aggregate. Fill in NFS/iSCSI LIF details based on the protocol. Skipping Node Mgmt IP skips cluster creation. To skip these tasks, delete every row. A blank row keeps Finish disabled.
             inputs:
               - name: node_specs
                 type: object
-                header: Node Name,SP IP,SP Netmask,SP Gateway,Data Ports,Aggregate Name,Disk Count,NFS LIF Name, NFS LIF Address, NFS LIF Netmask,iSCSI A LIF Name,iSCSI A LIF Address,iSCSI A LIF Netmask,iSCSI B LIF Name,iSCSI B LIF Address,iSCSI B LIF Netmask
+                header: Node Name,Node Mgmt IP,SP IP,SP Netmask,SP Gateway,Data Ports,Aggregate Name,Disk Count,NFS LIF Name, NFS LIF Address, NFS LIF Netmask,iSCSI A LIF Name,iSCSI A LIF Address,iSCSI A LIF Netmask,iSCSI B LIF Name,iSCSI B LIF Address,iSCSI B LIF Netmask
           - name: DNS and NTP
             inputs:
               - name: dns_domain_name
@@ -249,21 +254,35 @@ inputs:
     type: string
     default: ""
     description: >-
-      ONTAP cluster name. Used by location, timezone, and disabling HTTP
-      cluster management. Must exactly match the cluster's current name.
-      Entering a different value renames the cluster when location or timezone
-      is set. Leave this blank to skip those tasks and leave HTTP management
-      unchanged.
+      ONTAP cluster name. Required to create a new cluster.
+      Also used by location, timezone, and disabling HTTP cluster
+      management on a cluster. Leave this blank to skip the tasks.
   cluster_location:
     type: string
     default: ""
     description: Location string stored on the cluster.
+  cluster_mgmt_netmask:
+    type: string
+    default: ""
+    description: >-
+      Netmask for the cluster management interface. Required to create a
+      new cluster. Leave blank to skip cluster creation.
+  cluster_mgmt_gateway:
+    type: string
+    default: ""
+    description: >-
+      Gateway for the cluster management interface. Required to create a
+      new cluster. Leave blank to skip cluster creation.
   node_specs:
     type: string
     default: "[]"
     description: >-
-      One row per node. The node name is entered once and applies to that node's
-      service processor, data ports, interface group, and one aggregate. Data
+      One row per node. The first row's Node Mgmt IP is used to create a new
+      cluster; the other rows' Node Mgmt IPs are applied when those nodes join.
+      The node name is entered once and applies to that node's
+      service processor, data ports, interface group, and one aggregate. The
+      number of rows is also used to confirm the expected node count when
+      creating a new cluster. Data
       Ports is a comma-separated list, for example e5a,e5b. In-band management,
       NFS, and iSCSI VLANs are created on the interface group of each node that
       lists data ports. Aggregate names from these rows are assigned to the SVM
@@ -636,9 +655,28 @@ inputs:
       SVM task.
 
 grains:
+  create_ontap_cluster:
+    kind: ansible
+    when: '{% if .inputs.ontap_hostname != "" and .inputs.ontap_username != "" and .inputs.ontap_password != "" and .inputs.cluster_name != "" and .inputs.cluster_mgmt_netmask != "" and .inputs.cluster_mgmt_gateway != "" and .inputs.node_specs != "" and .inputs.node_specs != "[]" %}true{% else %}false{% endif %}'
+    spec:
+      source:
+        store: Stack-Automation-NetApp
+        path: assets/ansible/netapp-ontap/create_ontap_cluster.yaml
+      agent:
+        name: '{{ .inputs.agent }}'
+      inputs:
+        - ontap_hostname: '{{ .inputs.ontap_hostname }}'
+        - ontap_username: '{{ .inputs.ontap_username }}'
+        - ontap_password: '{{ .inputs.ontap_password }}'
+        - cluster_name: '{{ .inputs.cluster_name }}'
+        - cluster_mgmt_netmask: '{{ .inputs.cluster_mgmt_netmask }}'
+        - cluster_mgmt_gateway: '{{ .inputs.cluster_mgmt_gateway }}'
+        - node_specs: '{{ .inputs.node_specs }}'
+
   pre_validation:
     kind: ansible
     when: '{% if .inputs.ontap_hostname != "" and .inputs.ontap_username != "" and .inputs.ontap_password != "" %}true{% else %}false{% endif %}'
+    depends-on: create_ontap_cluster
     spec:
       source:
         store: Stack-Automation-NetApp
@@ -649,7 +687,7 @@ grains:
         - ontap_hostname: '{{ .inputs.ontap_hostname }}'
         - ontap_username: '{{ .inputs.ontap_username }}'
         - ontap_password: '{{ .inputs.ontap_password }}'
-        
+
   update_cluster_location:
     kind: ansible
     when: '{% if .inputs.cluster_name != "" and .inputs.cluster_location != "" %}true{% else %}false{% endif %}'

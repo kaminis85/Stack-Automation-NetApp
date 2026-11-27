@@ -1,0 +1,375 @@
+---
+- name: Create ONTAP Cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    node_rows: >-
+      {{
+        (node_specs | from_json)
+        if node_specs is string
+        else node_specs
+      }}
+    # Management IP of the first node (Node Mgmt IP column of the first node_specs row)
+    node1_ip: >-
+      {{
+        (node_rows[0].node_mgmt_ip | default(node_rows[0]['Node Mgmt IP'], true) | default('', true)) | string | trim
+      }}
+
+  tasks:
+
+    - name: Fail if any node row has no node management IP
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((row.node_mgmt_ip | default(row['Node Mgmt IP'], true) | default('', true)) | string | trim) | length > 0
+        fail_msg: >-
+          Node row {{ idx + 1 }} ({{ row.node_name | default(row['Node Name'], true) | default('unnamed', true) }})
+          has no Node Mgmt IP. Terminating the play.
+        quiet: true
+      loop: "{{ node_rows }}"
+      loop_control:
+        loop_var: row
+        index_var: idx
+        label: "row {{ idx + 1 }}"
+
+    - name: Build the node plan
+      ansible.builtin.set_fact:
+        cluster_node_plan: >-
+          {%- set plan = [] -%}
+          {%- for row in node_rows -%}
+          {%- set ip = (row.node_mgmt_ip | default(row['Node Mgmt IP'], true) | default('', true)) | string | trim -%}
+          {%- if ip | length > 0 -%}
+          {%- set name = (row.node_name | default(row['Node Name'], true) | default('', true)) | string | trim -%}
+          {%- set _ = plan.append({'node_name': name, 'node_mgmt_ip': ip}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ plan }}
+
+    - name: Check if the cluster already exists
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        gather_subset:
+          - cluster
+        https: true
+        validate_certs: false
+      register: existing_cluster
+      ignore_errors: true
+
+    - name: Fail if the existing cluster rejects the supplied credentials
+      ansible.builtin.fail:
+        msg: >-
+          A cluster is reachable at {{ ontap_hostname }} but rejected the
+          credentials for '{{ ontap_username }}' (401 not authorized). Check
+          ontap_username/ontap_password.
+      when:
+        - existing_cluster is failed
+        - >-
+          ('401' in (existing_cluster.msg | default('') | string))
+          or ('not authorized' in (existing_cluster.msg | default('') | string | lower))
+
+    - name: Record whether the cluster already exists
+      ansible.builtin.set_fact:
+        cluster_exists: "{{ existing_cluster is succeeded }}"
+        existing_cluster_name: >-
+          {{
+            ((existing_cluster.ontap_info | default({}, true)).get('cluster') or {}).get('name', '')
+          }}
+
+    - name: Fail if a different cluster already answers at the management IP
+      ansible.builtin.assert:
+        that:
+          - existing_cluster_name == '' or existing_cluster_name == (cluster_name | trim)
+        fail_msg: >-
+          A cluster named '{{ existing_cluster_name }}' already exists at
+          {{ ontap_hostname }}, expected '{{ cluster_name }}'.
+      when: cluster_exists | bool
+
+    - name: Check whether node1 already has an admin password set
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ node1_ip }}"
+        username: admin
+        password: ""
+        gather_subset:
+          - cluster
+        https: true
+        validate_certs: false
+      register: node1_precluster_check
+      ignore_errors: true
+      when: not (cluster_exists | bool)
+
+    - name: Fail if node1 already belongs to a different cluster
+      ansible.builtin.fail:
+        msg: >-
+          node1_ip ({{ node1_ip }}) rejected the blank bootstrap password,
+          which means it already has an admin password set and is likely
+          already part of a cluster (possibly reachable at a different
+          management IP than {{ ontap_hostname }}). Refusing to proceed -
+          verify node1_ip before creating or modifying the cluster management
+          interface and default route.
+      when:
+        - not (cluster_exists | bool)
+        - node1_precluster_check is failed
+        - >-
+          ('401' in (node1_precluster_check.msg | default('') | string))
+          or ('not authorized' in (node1_precluster_check.msg | default('') | string | lower))
+
+    - name: Create the cluster on the first node
+      netapp.ontap.na_ontap_restit:
+        api: /cluster
+        method: POST
+        body:
+          name: "{{ cluster_name }}"
+          password: "{{ ontap_password }}"
+          management_interface:
+            ip:
+              address: "{{ ontap_hostname }}"
+              netmask: "{{ cluster_mgmt_netmask }}"
+              gateway: "{{ cluster_mgmt_gateway }}"
+        hostname: "{{ node1_ip }}"
+        username: admin
+        password: ""
+        https: true
+        validate_certs: false
+      register: cluster_create
+      no_log: true
+      failed_when: false
+      when: not (cluster_exists | bool)
+
+    - name: Fail if the cluster create request failed
+      ansible.builtin.fail:
+        msg: >-
+          Cluster create request to {{ node1_ip }} failed with status
+          {{ cluster_create.status_code | default('unknown') }}:
+          {{ cluster_create.response.error.message | default(cluster_create.msg | default('no details available')) }}
+      when:
+        - not (cluster_exists | bool)
+        - >-
+          cluster_create.response.error is defined
+          or (cluster_create.status_code | default(0) | int) >= 300
+
+    - name: Extract the cluster create job UUID
+      ansible.builtin.set_fact:
+        cluster_create_job_uuid: "{{ cluster_create.response.job.uuid | default('', true) }}"
+      when: not (cluster_exists | bool)
+
+    - name: Fail if the cluster create call returned no job UUID
+      ansible.builtin.assert:
+        that:
+          - cluster_create_job_uuid != ''
+        fail_msg: "Cluster create returned no job UUID: {{ cluster_create.response | default({}) }}"
+      when: not (cluster_exists | bool)
+
+    # node1 starts with a blank admin password; the cluster password is applied
+    # and management moves to the cluster mgmt LIF during create. Polling node1
+    # would start returning 401 mid-job, so wait for the cluster IP and track
+    # the job there with the real credentials.
+    - name: Wait for the cluster management IP to accept connections
+      ansible.builtin.wait_for:
+        host: "{{ ontap_hostname }}"
+        port: 443
+        delay: 10
+        timeout: 300
+      when: not (cluster_exists | bool)
+
+    - name: Track the cluster create job
+      netapp.ontap.na_ontap_restit:
+        api: "cluster/jobs/{{ cluster_create_job_uuid }}"
+        method: GET
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      register: cluster_create_job
+      until:
+        - cluster_create_job is succeeded
+        - cluster_create_job.response.state | default('') in ['success', 'failure']
+      retries: 30
+      delay: 10
+      ignore_errors: true
+      when: not (cluster_exists | bool)
+
+    # Fallback: if the job record is not visible on the cluster (e.g. 404),
+    # an authenticated GET /cluster below still proves the create worked.
+    - name: Fail if the cluster create job reported failure
+      ansible.builtin.assert:
+        that:
+          - cluster_create_job.response.state | default('') != 'failure'
+        fail_msg: >-
+          Cluster create job {{ cluster_create_job_uuid }} ended in state
+          'failure': {{ cluster_create_job.response.message | default('') }}
+      when: not (cluster_exists | bool)
+
+    - name: Wait for the cluster to answer at the management IP
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        gather_subset:
+          - cluster
+        https: true
+        validate_certs: false
+      register: cluster_ready
+      until: cluster_ready is succeeded
+      retries: 12
+      delay: 15
+      when: not (cluster_exists | bool)
+
+    - name: Discover nodes available to join
+      netapp.ontap.na_ontap_restit:
+        api: cluster/nodes
+        method: GET
+        query:
+          membership: available
+          fields: cluster_interfaces.ip.address
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      register: discovered_nodes
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Build the join plan (available nodes paired with node plan entries 2..n)
+      ansible.builtin.set_fact:
+        node_join_plan: >-
+          {%- set available = discovered_nodes.response.records | default([]) -%}
+          {%- set plan = [] -%}
+          {%- for row in cluster_node_plan[1:] -%}
+          {%- if loop.index0 < available | length -%}
+          {%- set _ = plan.append({
+                'name': row.node_name,
+                'cluster_ip': available[loop.index0].cluster_interfaces[0].ip.address,
+                'mgmt_ip': row.node_mgmt_ip
+              }) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ plan }}
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Fail if fewer nodes are available than expected
+      ansible.builtin.assert:
+        that:
+          - node_join_plan | length == cluster_node_plan | length - 1
+          - node_join_plan | selectattr('mgmt_ip', 'equalto', '') | list | length == 0
+        fail_msg: >-
+          Expected {{ cluster_node_plan | length - 1 }} node(s) available to join with a
+          management IP each, got plan: {{ node_join_plan }}
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Join available nodes to the cluster and configure node management interfaces
+      netapp.ontap.na_ontap_restit:
+        api: cluster/nodes
+        method: POST
+        body:
+          records: >-
+            {%- set recs = [] -%}
+            {%- for n in node_join_plan -%}
+            {%- set _ = recs.append({
+                  'cluster_interface': {'ip': {'address': n.cluster_ip}},
+                  'management_interface': {'ip': {'address': n.mgmt_ip}}
+                }) -%}
+            {%- endfor -%}
+            {{ recs }}
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      register: node_join
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Extract the node join job UUID
+      ansible.builtin.set_fact:
+        node_join_job_uuid: "{{ node_join.response.job.uuid | default('', true) }}"
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Fail if the node join call returned no job UUID
+      ansible.builtin.assert:
+        that:
+          - node_join_job_uuid != ''
+        fail_msg: "Node join returned no job UUID: {{ node_join.response | default({}) }}"
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    # Job states: running -> success | failure
+    - name: Track the node join job
+      netapp.ontap.na_ontap_restit:
+        api: "cluster/jobs/{{ node_join_job_uuid }}"
+        method: GET
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        https: true
+        validate_certs: false
+      register: node_join_job
+      until:
+        - node_join_job is succeeded
+        - node_join_job.response.state | default('') in ['success', 'failure']
+      retries: 30
+      delay: 10
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Fail if the node join job reported failure
+      ansible.builtin.assert:
+        that:
+          - node_join_job.response.state | default('') == 'success'
+        fail_msg: >-
+          Node join job {{ node_join_job_uuid }} ended in state
+          '{{ node_join_job.response.state | default('unknown') }}':
+          {{ node_join_job.response.message | default('') }}
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 1
+
+    - name: Verify the expected number of nodes joined the cluster
+      netapp.ontap.na_ontap_rest_info:
+        hostname: "{{ ontap_hostname }}"
+        username: "{{ ontap_username }}"
+        password: "{{ ontap_password }}"
+        gather_subset:
+          - cluster/nodes
+        fields:
+          - membership
+        https: true
+        validate_certs: false
+      register: final_nodes
+      until: >-
+        ((final_nodes.ontap_info['cluster/nodes'] | default({}, true)).records | default([])
+         | selectattr('membership', 'equalto', 'member') | list | length) == cluster_node_plan | length
+      retries: 30
+      delay: 20
+      failed_when: false
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 0
+
+    - name: Fail if not all expected nodes joined the cluster
+      ansible.builtin.assert:
+        that:
+          - ((final_nodes.ontap_info['cluster/nodes'] | default({}, true)).records | default([]) | selectattr('membership', 'equalto', 'member') | list | length) == cluster_node_plan | length
+        fail_msg: >-
+          Expected {{ cluster_node_plan | length }} node(s) in the cluster, found
+          {{ (final_nodes.ontap_info['cluster/nodes'] | default({}, true)).records | default([]) | selectattr('membership', 'equalto', 'member') | list | length }}.
+          Records: {{ (final_nodes.ontap_info['cluster/nodes'] | default({}, true)).records | default([]) }}
+        success_msg: >-
+          All {{ cluster_node_plan | length }} node(s) are members of the cluster.
+      when:
+        - not (cluster_exists | bool)
+        - cluster_node_plan | length > 0
